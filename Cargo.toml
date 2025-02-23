@@ -9,6 +9,7 @@ categories = ["compilers"]
 license = "Apache-2.0"
 
 [dependencies]
+target-lexicon = { version = "0.13.2", features = ["std"] }
 
 
 [workspace]

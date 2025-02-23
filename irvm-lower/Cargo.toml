@@ -9,3 +9,5 @@ categories = ["compilers"]
 license = "Apache-2.0"
 
 [dependencies]
+llvm-sys = "191.0.0"
+irvm = { path = "..", version = "0.1.0" }
