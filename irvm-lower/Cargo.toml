@@ -1,15 +1,11 @@
 [package]
-name = "irvm"
+name = "irvm-lower"
 version = "0.1.0"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
-description = "A IR compiler target with a Rust friendly API that lowers to LLVM IR."
+description = "The lowering library for IRVM to go to LLVM IR"
 keywords = ["llvm", "compiler", "ir", "compiler-target", "llvm-ir"]
 categories = ["compilers"]
 license = "Apache-2.0"
 
 [dependencies]
-
-
-[workspace]
-members = ["irvm-lower"]
