@@ -14,8 +14,8 @@ pub enum Type {
     Ptr(Option<u32>),
     Vector(VectorType),
     Array(ArrayType),
-    Struct(StructType),
-    Opaque(Option<String>),
+    Struct(Arc<StructType>),
+    Opaque(Arc<Option<String>>),
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +35,7 @@ pub struct StructType {
 pub struct VectorType {
     pub size: u32,
     pub ty: Arc<Type>,
+    pub vscale: bool,
 }
 
 #[derive(Debug, Clone)]
