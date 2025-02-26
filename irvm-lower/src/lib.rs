@@ -5,7 +5,13 @@ mod test {
     use std::error::Error;
 
     use irvm::{
-        block::Terminator, datalayout::DataLayout, function::{Function, Parameter}, module::Module, target_lexicon::Triple, types::Type, value::{ConstValue, Operand}
+        block::Terminator,
+        datalayout::DataLayout,
+        function::{Function, Parameter},
+        module::Module,
+        target_lexicon::Triple,
+        types::Type,
+        value::{ConstValue, Operand},
     };
     use typed_generational_arena::StandardArena;
 

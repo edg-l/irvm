@@ -252,7 +252,7 @@ impl DataLayout {
             }
             Type::Array(array_type) => {
                 let align = self.get_type_align(&array_type.ty);
-                align * array_type.size
+                align * array_type.size as u32
             }
             Type::Struct(struct_type) => {
                 let mut size = 0;
@@ -280,7 +280,6 @@ impl DataLayout {
                     size
                 }
             }
-            Type::Opaque(_) => todo!(),
         }
     }
 
@@ -469,7 +468,6 @@ impl DataLayout {
                     max_align
                 }
             }
-            Type::Opaque(_) => todo!(),
         }
     }
 
@@ -665,7 +663,6 @@ impl DataLayout {
                     max_align
                 }
             }
-            Type::Opaque(_) => todo!(),
         }
     }
 

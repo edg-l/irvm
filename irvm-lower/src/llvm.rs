@@ -69,7 +69,8 @@ struct FnCtx {
 
 fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
     unsafe {
-        let block_ptr = core::LLVMGetInsertBlock(ctx.builder);
+        let null_name = c"";
+        let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, null_name.as_ptr());
         core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
 
         let block = &ctx.func.blocks[block];
@@ -80,19 +81,22 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                     irvm::block::BinaryOp::Add { lhs, rhs, nsw, nuw } => {
                         let lhs_ptr = lower_operand(ctx, lhs);
                         let rhs_ptr = lower_operand(ctx, rhs);
-                        let value = core::LLVMBuildAdd(ctx.builder, lhs_ptr, rhs_ptr, null_mut());
+                        let value =
+                            core::LLVMBuildAdd(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr());
                         ctx.values.insert(inst_idx.to_idx(), value);
                     }
                     irvm::block::BinaryOp::Sub { lhs, rhs, nsw, nuw } => {
                         let lhs_ptr = lower_operand(ctx, lhs);
                         let rhs_ptr = lower_operand(ctx, rhs);
-                        let value = core::LLVMBuildSub(ctx.builder, lhs_ptr, rhs_ptr, null_mut());
+                        let value =
+                            core::LLVMBuildSub(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr());
                         ctx.values.insert(inst_idx.to_idx(), value);
                     }
                     irvm::block::BinaryOp::Mul { lhs, rhs, nsw, nuw } => {
                         let lhs_ptr = lower_operand(ctx, lhs);
                         let rhs_ptr = lower_operand(ctx, rhs);
-                        let value = core::LLVMBuildMul(ctx.builder, lhs_ptr, rhs_ptr, null_mut());
+                        let value =
+                            core::LLVMBuildMul(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr());
                         ctx.values.insert(inst_idx.to_idx(), value);
                     }
                     irvm::block::BinaryOp::Div {
@@ -104,9 +108,9 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                         let lhs_ptr = lower_operand(ctx, lhs);
                         let rhs_ptr = lower_operand(ctx, rhs);
                         let value = if *signed {
-                            core::LLVMBuildSDiv(ctx.builder, lhs_ptr, rhs_ptr, null_mut())
+                            core::LLVMBuildSDiv(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr())
                         } else {
-                            core::LLVMBuildUDiv(ctx.builder, lhs_ptr, rhs_ptr, null_mut())
+                            core::LLVMBuildUDiv(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr())
                         };
                         ctx.values.insert(inst_idx.to_idx(), value);
                     }
@@ -114,9 +118,9 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                         let lhs_ptr = lower_operand(ctx, lhs);
                         let rhs_ptr = lower_operand(ctx, rhs);
                         let value = if *signed {
-                            core::LLVMBuildSRem(ctx.builder, lhs_ptr, rhs_ptr, null_mut())
+                            core::LLVMBuildSRem(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr())
                         } else {
-                            core::LLVMBuildURem(ctx.builder, lhs_ptr, rhs_ptr, null_mut())
+                            core::LLVMBuildURem(ctx.builder, lhs_ptr, rhs_ptr, null_name.as_ptr())
                         };
                         ctx.values.insert(inst_idx.to_idx(), value);
                     }
@@ -158,7 +162,7 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                 Instruction::OtherOp(other_op) => match other_op {
                     irvm::block::OtherOp::Call(call_op) => {
                         // core::LLVMBuildCall2(ctx.builder, arg2, Fn, Args, NumArgs, Name)
-                    },
+                    }
                     irvm::block::OtherOp::Icmp { cond, lhs, rhs } => todo!(),
                     irvm::block::OtherOp::Fcmp { cond, lhs, rhs } => todo!(),
                 },
@@ -173,7 +177,7 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                 } else {
                     core::LLVMBuildRetVoid(ctx.builder);
                 }
-            },
+            }
             irvm::block::Terminator::Br { block, arguments } => todo!(),
         }
     }
@@ -182,9 +186,7 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
 fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
     unsafe {
         match operand {
-            Operand::Parameter(idx, _ty) => {
-                core::LLVMGetParam(ctx.fn_ptr, (*idx) as u32)
-            },
+            Operand::Parameter(idx, _ty) => core::LLVMGetParam(ctx.fn_ptr, (*idx) as u32),
             Operand::Value(index, _) => *ctx.values.get(&index.to_idx()).unwrap(),
             Operand::Constant(const_value, ty) => {
                 let ty_ptr = lower_type(ctx.ctx, ty);

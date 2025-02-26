@@ -3,7 +3,6 @@ use typed_generational_arena::{StandardArena, StandardIndex};
 use crate::{
     common::CConv,
     error::Error,
-    function::Parameter,
     types::{FunctionType, Type},
     value::Operand,
 };
@@ -33,7 +32,7 @@ pub enum Instruction {
 
 #[derive(Debug, Clone)]
 pub enum Terminator {
-    Ret,
+    Ret(Option<Operand>),
     Br {
         block: BlockIdx,
         arguments: Vec<Operand>,
@@ -232,7 +231,7 @@ impl Default for Block {
     fn default() -> Self {
         Self {
             instructions: StandardArena::new(),
-            terminator: Terminator::Ret,
+            terminator: Terminator::Ret(None),
             arguments: Vec::new(),
         }
     }
@@ -293,7 +292,7 @@ impl Block {
     pub fn new(arguments: Vec<Operand>) -> Self {
         Self {
             instructions: StandardArena::new(),
-            terminator: Terminator::Ret,
+            terminator: Terminator::Ret(None),
             arguments,
         }
     }

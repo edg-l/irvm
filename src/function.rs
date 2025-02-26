@@ -73,3 +73,30 @@ impl Parameter {
         }
     }
 }
+
+impl Function {
+    pub fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
+        let mut blocks = StandardArena::new();
+        let entry_block = blocks.insert(Block::new(Vec::new()));
+        Self {
+            name: name.to_string(),
+            cconv: None,
+            linkage: None,
+            visibility: None,
+            dll_storage: None,
+            blocks,
+            entry_block,
+            result_type: ret_ty,
+            parameters: params.to_vec(),
+            align: None,
+        }
+    }
+
+    pub fn entry_block(&mut self) -> &mut Block {
+        &mut self.blocks[self.entry_block]
+    }
+
+    pub fn add_block(&mut self, block: Block) -> BlockIdx {
+        self.blocks.insert(block)
+    }
+}

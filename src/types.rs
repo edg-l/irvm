@@ -15,12 +15,11 @@ pub enum Type {
     Vector(VectorType),
     Array(ArrayType),
     Struct(Arc<StructType>),
-    Opaque(Arc<Option<String>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArrayType {
-    pub size: u32,
+    pub size: u64,
     pub ty: Arc<Type>,
 }
 
