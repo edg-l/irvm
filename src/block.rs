@@ -1,6 +1,12 @@
 use typed_generational_arena::{StandardArena, StandardIndex};
 
-use crate::{common::CConv, error::Error, function::Parameter, types::{FunctionType, Type}, value::Operand};
+use crate::{
+    common::CConv,
+    error::Error,
+    function::Parameter,
+    types::{FunctionType, Type},
+    value::Operand,
+};
 
 pub type BlockIdx = StandardIndex<Block>;
 pub type InstIdx = StandardIndex<Instruction>;
@@ -22,7 +28,7 @@ pub enum Instruction {
     BitwiseBinaryOp(BitwiseBinaryOp),
     VectorOp(VectorOp),
     MemoryOp(MemoryOp),
-    CallOp
+    OtherOp(OtherOp),
 }
 
 #[derive(Debug, Clone)]
@@ -146,20 +152,7 @@ pub enum MemoryOp {
 
 #[derive(Debug, Clone)]
 pub enum OtherOp {
-    Call {
-        tail: bool,
-        musttail: bool,
-        notail: bool,
-        /// Must match the target fn cconv or ub.
-        cconv: CConv,
-        params: Vec<Operand>,
-        ret_ty: Type,
-        ret_attrs: Option<CallReturnAttrs>,
-        addr_space: Option<u32>,
-        /// Only needed if its a varargs function.
-        fn_ty: Option<FunctionType>,
-        fn_target: CallableValue,
-    },
+    Call(CallOp),
     Icmp {
         cond: IcmpCond,
         lhs: Operand,
@@ -170,6 +163,22 @@ pub enum OtherOp {
         lhs: Operand,
         rhs: Operand,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct CallOp {
+    pub tail: bool,
+    pub musttail: bool,
+    pub notail: bool,
+    /// Must match the target fn cconv or ub.
+    pub cconv: CConv,
+    pub params: Vec<Operand>,
+    pub ret_ty: Type,
+    pub ret_attrs: Option<CallReturnAttrs>,
+    pub addr_space: Option<u32>,
+    /// Only needed if its a varargs function.
+    pub fn_ty: Option<FunctionType>,
+    pub fn_target: CallableValue,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -525,5 +534,38 @@ impl Block {
             }));
 
         Ok(Operand::Value(idx, Type::Ptr(None)))
+    }
+
+    pub fn instr_call(
+        &mut self,
+        symbol: &str,
+        params: &[Operand],
+        ret_ty: &Type,
+    ) -> Result<Operand, Error> {
+        let idx = self
+            .instructions
+            .insert(Instruction::OtherOp(OtherOp::Call(CallOp {
+                tail: false,
+                musttail: false,
+                notail: false,
+                cconv: CConv::default(),
+                params: params.to_vec(),
+                ret_ty: ret_ty.clone(),
+                ret_attrs: None,
+                addr_space: None,
+                fn_ty: None,
+                fn_target: CallableValue::Symbol(symbol.to_string()),
+            })));
+
+        Ok(Operand::Value(idx, ret_ty.clone()))
+    }
+
+    pub fn instr_call_ex(&mut self, call_op: CallOp) -> Result<Operand, Error> {
+        let ret_ty = call_op.ret_ty.clone();
+        let idx = self
+            .instructions
+            .insert(Instruction::OtherOp(OtherOp::Call(call_op)));
+
+        Ok(Operand::Value(idx, ret_ty))
     }
 }

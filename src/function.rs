@@ -1,7 +1,10 @@
 use typed_generational_arena::StandardArena;
 
-use crate::{block::{Block, BlockIdx}, common::{CConv, DllStorageClass, Linkage, Visibility}, types::Type};
-
+use crate::{
+    block::{Block, BlockIdx},
+    common::{CConv, DllStorageClass, Linkage, Visibility},
+    types::Type,
+};
 
 #[derive(Debug, Clone)]
 pub struct Function {

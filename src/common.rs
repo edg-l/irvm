@@ -37,7 +37,7 @@ pub enum Visibility {
     #[default]
     Default,
     Hidden,
-    Protected
+    Protected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

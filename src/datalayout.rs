@@ -858,26 +858,23 @@ mod test {
         assert_eq!(datalayout.get_type_size(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_size(&Type::Ptr(Some(2))), 64);
 
-        assert_eq!(datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
-            packed: false,
-            ident: None,
-            fields: vec![
-                Type::Int(64),
-                Type::Int(32),
-                Type::Int(32),
-            ]
-        }))), 128);
+        assert_eq!(
+            datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+                packed: false,
+                ident: None,
+                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32),]
+            }))),
+            128
+        );
 
-        assert_eq!(datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
-            packed: false,
-            ident: None,
-            fields: vec![
-                Type::Int(64),
-                Type::Int(32),
-                Type::Int(32),
-                Type::Int(32),
-            ]
-        }))), 192);
+        assert_eq!(
+            datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+                packed: false,
+                ident: None,
+                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32), Type::Int(32),]
+            }))),
+            192
+        );
     }
 
     #[test]
@@ -907,26 +904,23 @@ mod test {
         assert_eq!(datalayout.get_type_align(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_align(&Type::Ptr(Some(2))), 64);
 
-        assert_eq!(datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
-            packed: false,
-            ident: None,
-            fields: vec![
-                Type::Int(64),
-                Type::Int(32),
-                Type::Int(32),
-            ]
-        }))), 64);
+        assert_eq!(
+            datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+                packed: false,
+                ident: None,
+                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32),]
+            }))),
+            64
+        );
 
-        assert_eq!(datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
-            packed: false,
-            ident: None,
-            fields: vec![
-                Type::Int(64),
-                Type::Int(32),
-                Type::Int(32),
-                Type::Int(32),
-            ]
-        }))), 64);
+        assert_eq!(
+            datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+                packed: false,
+                ident: None,
+                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32), Type::Int(32),]
+            }))),
+            64
+        );
     }
 
     #[test]
