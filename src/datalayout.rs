@@ -206,8 +206,6 @@ impl DataLayout {
                         {
                             closest_found_lower = Some(size.max(abi));
                         }
-
-                        dbg!(closest_found_lower);
                     }
                 }
 
@@ -248,9 +246,40 @@ impl DataLayout {
                 }
                 found_value.expect("should have a ptr type")
             }
-            Type::Vector(vector_type) => todo!(),
-            Type::Array(array_type) => todo!(),
-            Type::Struct(struct_type) => todo!(),
+            Type::Vector(vector_type) => {
+                let align = self.get_type_align(&vector_type.ty);
+                align * vector_type.size
+            }
+            Type::Array(array_type) => {
+                let align = self.get_type_align(&array_type.ty);
+                align * array_type.size
+            }
+            Type::Struct(struct_type) => {
+                let mut size = 0;
+                let mut align = 1;
+
+                for field in &struct_type.fields {
+                    let field_align = self.get_type_align(field);
+                    align = align.max(field_align);
+
+                    if size % field_align != 0 {
+                        let padding = (field_align - (size % field_align)) % field_align;
+                        size += padding;
+                    }
+
+                    let field_size = self.get_type_size(field);
+
+                    size += field_size;
+                }
+
+                if size % align == 0 {
+                    size
+                } else {
+                    let padding = (align - (size % align)) % align;
+                    size += padding;
+                    size
+                }
+            }
             Type::Opaque(_) => todo!(),
         }
     }
@@ -285,8 +314,8 @@ impl DataLayout {
             }
             Type::Half | Type::BFloat => {
                 let bits = 16;
-                let mut closest_found_abi = 0;
-                let mut closest_found = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -298,19 +327,19 @@ impl DataLayout {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = abi;
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(abi);
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Float => {
                 let bits = 32;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -322,19 +351,19 @@ impl DataLayout {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = abi;
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(abi);
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Double => {
                 let bits = 64;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -346,19 +375,19 @@ impl DataLayout {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = abi;
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(abi);
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Fp128 | Type::PpcFp128 => {
                 let bits = 128;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -370,19 +399,19 @@ impl DataLayout {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = abi;
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(abi);
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::X86Fp80 => {
                 let bits = 80;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -394,14 +423,14 @@ impl DataLayout {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = abi;
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(abi);
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Ptr(addr_space) => {
                 let mut found_value = None;
@@ -425,9 +454,21 @@ impl DataLayout {
                 }
                 found_value.expect("should have a ptr type")
             }
-            Type::Vector(vector_type) => todo!(),
-            Type::Array(array_type) => todo!(),
-            Type::Struct(struct_type) => todo!(),
+            Type::Vector(vector_type) => self.get_type_abi_align(&vector_type.ty),
+            Type::Array(array_type) => self.get_type_abi_align(&array_type.ty),
+            Type::Struct(struct_type) => {
+                if struct_type.packed {
+                    1
+                } else {
+                    let mut max_align = 1;
+
+                    for field in &struct_type.fields {
+                        max_align = max_align.max(self.get_type_abi_align(field));
+                    }
+
+                    max_align
+                }
+            }
             Type::Opaque(_) => todo!(),
         }
     }
@@ -466,8 +507,8 @@ impl DataLayout {
             }
             Type::Half | Type::BFloat => {
                 let bits = 16;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -479,19 +520,19 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = prefered.unwrap_or(abi);
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(prefered.unwrap_or(abi));
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Float => {
                 let bits = 32;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -503,19 +544,19 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = prefered.unwrap_or(abi);
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(prefered.unwrap_or(abi));
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Double => {
                 let bits = 64;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -527,19 +568,19 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = prefered.unwrap_or(abi);
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(prefered.unwrap_or(abi));
                         }
                     }
                 }
 
-                closest_found_abi
+                closest_found_abi.unwrap()
             }
             Type::Fp128 | Type::PpcFp128 => {
                 let bits = 128;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -551,19 +592,19 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = prefered.unwrap_or(abi);
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(prefered.unwrap_or(abi));
                         }
                     }
                 }
 
-                closest_found_abi
-            },
+                closest_found_abi.unwrap()
+            }
             Type::X86Fp80 => {
                 let bits = 80;
-                let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found_abi = None;
+                let mut closest_found = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
@@ -575,15 +616,15 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
-                            closest_found = size;
-                            closest_found_abi = prefered.unwrap_or(abi);
+                        if size > bits && (closest_found.is_none() || Some(size) < closest_found) {
+                            closest_found = Some(size);
+                            closest_found_abi = Some(prefered.unwrap_or(abi));
                         }
                     }
                 }
 
-                closest_found_abi
-            },
+                closest_found_abi.unwrap()
+            }
             Type::Ptr(addr_space) => {
                 let mut found_value = None;
                 for found in &self.type_infos {
@@ -609,9 +650,21 @@ impl DataLayout {
                 }
                 found_value.expect("should have a ptr type")
             }
-            Type::Vector(vector_type) => todo!(),
-            Type::Array(array_type) => todo!(),
-            Type::Struct(struct_type) => todo!(),
+            Type::Vector(vector_type) => self.get_type_align(&vector_type.ty),
+            Type::Array(array_type) => self.get_type_align(&array_type.ty),
+            Type::Struct(struct_type) => {
+                if struct_type.packed {
+                    1
+                } else {
+                    let mut max_align = 1;
+
+                    for field in &struct_type.fields {
+                        max_align = max_align.max(self.get_type_align(field));
+                    }
+
+                    max_align
+                }
+            }
             Type::Opaque(_) => todo!(),
         }
     }
@@ -772,7 +825,9 @@ impl DataLayout {
 
 #[cfg(test)]
 mod test {
-    use crate::types::Type;
+    use std::sync::Arc;
+
+    use crate::types::{StructType, Type};
 
     use super::DataLayout;
 
@@ -802,6 +857,27 @@ mod test {
 
         assert_eq!(datalayout.get_type_size(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_size(&Type::Ptr(Some(2))), 64);
+
+        assert_eq!(datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+            packed: false,
+            ident: None,
+            fields: vec![
+                Type::Int(64),
+                Type::Int(32),
+                Type::Int(32),
+            ]
+        }))), 128);
+
+        assert_eq!(datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+            packed: false,
+            ident: None,
+            fields: vec![
+                Type::Int(64),
+                Type::Int(32),
+                Type::Int(32),
+                Type::Int(32),
+            ]
+        }))), 192);
     }
 
     #[test]
@@ -830,6 +906,27 @@ mod test {
 
         assert_eq!(datalayout.get_type_align(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_align(&Type::Ptr(Some(2))), 64);
+
+        assert_eq!(datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+            packed: false,
+            ident: None,
+            fields: vec![
+                Type::Int(64),
+                Type::Int(32),
+                Type::Int(32),
+            ]
+        }))), 64);
+
+        assert_eq!(datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+            packed: false,
+            ident: None,
+            fields: vec![
+                Type::Int(64),
+                Type::Int(32),
+                Type::Int(32),
+                Type::Int(32),
+            ]
+        }))), 64);
     }
 
     #[test]
