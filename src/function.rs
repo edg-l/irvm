@@ -1,4 +1,6 @@
-use crate::{block::Block, common::{CConv, DllStorageClass, Linkage, Visibility}, types::Type};
+use typed_generational_arena::StandardArena;
+
+use crate::{block::{Block, BlockIdx}, common::{CConv, DllStorageClass, Linkage, Visibility}, types::Type};
 
 
 #[derive(Debug, Clone)]
@@ -8,7 +10,8 @@ pub struct Function {
     pub linkage: Option<Linkage>,
     pub visibility: Option<Visibility>,
     pub dll_storage: Option<DllStorageClass>,
-    pub blocks: Vec<Block>,
+    pub blocks: StandardArena<Block>,
+    pub entry_block: BlockIdx,
     pub result_type: Type,
     pub parameters: Vec<Parameter>,
     pub align: Option<u32>,

@@ -1,5 +1,3 @@
-use std::u32;
-
 use crate::types::Type;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,6 +45,7 @@ pub enum TypeLayout {
         prefered: Option<u32>,
         /// [n]. Only used for pointer types.
         address_space: Option<u32>,
+        index_size: Option<u32>,
     },
     FunctionPointer {
         /// True: The alignment of function pointers is independent of the alignment of functions, and is a multiple of <abi>.
@@ -124,6 +123,7 @@ impl Default for DataLayout {
                     abi: 64,
                     prefered: Some(64),
                     address_space: None,
+                    index_size: None,
                 },
                 TypeLayout::Int {
                     size: 1,
@@ -222,7 +222,7 @@ impl DataLayout {
             Type::Float => 32,
             Type::Double => 64,
             Type::Fp128 => 128,
-            Type::X86Fp80 => 128,
+            Type::X86Fp80 => 80,
             Type::PpcFp128 => 128,
             Type::Ptr(addr_space) => {
                 let mut found_value = None;
@@ -286,19 +286,19 @@ impl DataLayout {
             Type::Half | Type::BFloat => {
                 let bits = 16;
                 let mut closest_found_abi = 0;
-                let mut closest_found: u32 = 0;
+                let mut closest_found = 0;
                 for found in &self.type_infos {
                     if let TypeLayout::Float {
                         size,
                         abi,
-                        prefered,
+                        prefered: _,
                     } = *found
                     {
                         if size == bits {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = abi;
                         }
@@ -315,14 +315,14 @@ impl DataLayout {
                     if let TypeLayout::Float {
                         size,
                         abi,
-                        prefered,
+                        prefered: _,
                     } = *found
                     {
                         if size == bits {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = abi;
                         }
@@ -339,14 +339,14 @@ impl DataLayout {
                     if let TypeLayout::Float {
                         size,
                         abi,
-                        prefered,
+                        prefered: _,
                     } = *found
                     {
                         if size == bits {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = abi;
                         }
@@ -363,14 +363,14 @@ impl DataLayout {
                     if let TypeLayout::Float {
                         size,
                         abi,
-                        prefered,
+                        prefered: _,
                     } = *found
                     {
                         if size == bits {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = abi;
                         }
@@ -387,14 +387,14 @@ impl DataLayout {
                     if let TypeLayout::Float {
                         size,
                         abi,
-                        prefered,
+                        prefered: _,
                     } = *found
                     {
                         if size == bits {
                             return abi;
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = abi;
                         }
@@ -479,7 +479,7 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = prefered.unwrap_or(abi);
                         }
@@ -503,7 +503,7 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = prefered.unwrap_or(abi);
                         }
@@ -527,7 +527,7 @@ impl DataLayout {
                             return prefered.unwrap_or(abi);
                         }
 
-                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && bits >= size {
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
                             closest_found = size;
                             closest_found_abi = prefered.unwrap_or(abi);
                         }
@@ -536,8 +536,54 @@ impl DataLayout {
 
                 closest_found_abi
             }
-            Type::Fp128 | Type::PpcFp128 => 128,
-            Type::X86Fp80 => 128,
+            Type::Fp128 | Type::PpcFp128 => {
+                let bits = 128;
+                let mut closest_found_abi = 0;
+                let mut closest_found: u32 = 0;
+                for found in &self.type_infos {
+                    if let TypeLayout::Float {
+                        size,
+                        abi,
+                        prefered,
+                    } = *found
+                    {
+                        if size == bits {
+                            return prefered.unwrap_or(abi);
+                        }
+
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
+                            closest_found = size;
+                            closest_found_abi = prefered.unwrap_or(abi);
+                        }
+                    }
+                }
+
+                closest_found_abi
+            },
+            Type::X86Fp80 => {
+                let bits = 80;
+                let mut closest_found_abi = 0;
+                let mut closest_found: u32 = 0;
+                for found in &self.type_infos {
+                    if let TypeLayout::Float {
+                        size,
+                        abi,
+                        prefered,
+                    } = *found
+                    {
+                        if size == bits {
+                            return prefered.unwrap_or(abi);
+                        }
+
+                        if bits.abs_diff(size) <= closest_found.abs_diff(size) && size > bits {
+                            closest_found = size;
+                            closest_found_abi = prefered.unwrap_or(abi);
+                        }
+                    }
+                }
+
+                closest_found_abi
+            },
             Type::Ptr(addr_space) => {
                 let mut found_value = None;
                 for found in &self.type_infos {
@@ -569,6 +615,159 @@ impl DataLayout {
             Type::Opaque(_) => todo!(),
         }
     }
+
+    pub fn to_llvm_string(&self) -> String {
+        // example linux x86_64 "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+        // example macos arm "e-m:o-i64:64-i128:128-n32:64-S128-Fn32"
+        let mut target = String::new();
+
+        match self.endianess {
+            Endianess::Little => target.push('e'),
+            Endianess::Big => target.push('E'),
+        }
+
+        if let Some(mangling) = self.mangling {
+            match mangling {
+                Mangling::Elf => target.push_str("-m:e"),
+                Mangling::Goff => target.push_str("-m:l"),
+                Mangling::Mips => target.push_str("-m:m"),
+                Mangling::MachO => target.push_str("-m:o"),
+                Mangling::Windowsx86Coff => target.push_str("-m:x"),
+                Mangling::WindowsCoff => target.push_str("-m:w"),
+                Mangling::XCoff => target.push_str("-m:a"),
+            }
+        }
+
+        if let Some(stack_align) = self.stack_alignment {
+            target.push_str(&format!("-S{stack_align}"));
+        }
+
+        if let Some(address_space) = self.address_space {
+            target.push_str(&format!("-P{address_space}"));
+        }
+
+        if let Some(globals_address_space) = self.globals_address_space {
+            target.push_str(&format!("-G{globals_address_space}"));
+        }
+
+        if let Some(alloca_address_space) = self.alloca_address_space {
+            target.push_str(&format!("-A{alloca_address_space}"));
+        }
+
+        for ty in &self.type_infos {
+            match ty {
+                TypeLayout::Pointer {
+                    size,
+                    abi,
+                    prefered,
+                    address_space,
+                    index_size,
+                } => {
+                    target.push_str("-p");
+
+                    if let Some(address_space) = address_space {
+                        target.push_str(&address_space.to_string());
+                    }
+
+                    target.push_str(&format!(":{size}"));
+                    target.push_str(&format!(":{abi}"));
+
+                    if let Some(prefered) = prefered {
+                        target.push_str(&format!(":{prefered}"));
+                    }
+
+                    if let Some(index_size) = index_size {
+                        target.push_str(&format!(":{index_size}"));
+                    }
+                }
+                TypeLayout::FunctionPointer {
+                    align_independent,
+                    abi,
+                } => {
+                    target.push_str("-F");
+
+                    if *align_independent {
+                        target.push('i');
+                    } else {
+                        target.push('n');
+                    }
+
+                    target.push_str(&format!("{abi}"));
+                }
+                TypeLayout::Int {
+                    size,
+                    abi,
+                    prefered,
+                } => {
+                    target.push_str("-i");
+
+                    target.push_str(&format!("{size}"));
+                    target.push_str(&format!(":{abi}"));
+
+                    if let Some(prefered) = prefered {
+                        target.push_str(&format!(":{prefered}"));
+                    }
+                }
+                TypeLayout::Vector {
+                    size,
+                    abi,
+                    prefered,
+                } => {
+                    target.push_str("-v");
+
+                    target.push_str(&format!("{size}"));
+                    target.push_str(&format!(":{abi}"));
+
+                    if let Some(prefered) = prefered {
+                        target.push_str(&format!(":{prefered}"));
+                    }
+                }
+                TypeLayout::Float {
+                    size,
+                    abi,
+                    prefered,
+                } => {
+                    target.push_str("-f");
+
+                    target.push_str(&format!("{size}"));
+                    target.push_str(&format!(":{abi}"));
+
+                    if let Some(prefered) = prefered {
+                        target.push_str(&format!(":{prefered}"));
+                    }
+                }
+                TypeLayout::Aggregate { abi, prefered } => {
+                    target.push_str("-a");
+
+                    target.push_str(&format!(":{abi}"));
+
+                    if let Some(prefered) = prefered {
+                        target.push_str(&format!(":{prefered}"));
+                    }
+                }
+            }
+        }
+
+        if !self.native_integer_widths.is_empty() {
+            target.push_str("-n");
+            let mut iter = self.native_integer_widths.iter();
+            target.push_str(&iter.next().unwrap().to_string());
+            for native in iter {
+                target.push_str(&format!(":{native}"));
+            }
+        }
+
+        if !self.non_integral_address_spaces.is_empty() {
+            target.push_str("-ni");
+            let mut iter = self.non_integral_address_spaces.iter();
+            target.push_str(&iter.next().unwrap().to_string());
+            for native in iter {
+                target.push_str(&format!(":{native}"));
+            }
+        }
+
+        target
+    }
 }
 
 #[cfg(test)]
@@ -598,7 +797,7 @@ mod test {
         assert_eq!(datalayout.get_type_size(&Type::BFloat), 16);
         assert_eq!(datalayout.get_type_size(&Type::Float), 32);
         assert_eq!(datalayout.get_type_size(&Type::Double), 64);
-        assert_eq!(datalayout.get_type_size(&Type::X86Fp80), 128);
+        assert_eq!(datalayout.get_type_size(&Type::X86Fp80), 80);
         assert_eq!(datalayout.get_type_size(&Type::PpcFp128), 128);
 
         assert_eq!(datalayout.get_type_size(&Type::Ptr(None)), 64);
@@ -631,5 +830,15 @@ mod test {
 
         assert_eq!(datalayout.get_type_align(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_align(&Type::Ptr(Some(2))), 64);
+    }
+
+    #[test]
+    fn test_datalayout_string() {
+        let datalayout = DataLayout::default();
+
+        assert_eq!(
+            datalayout.to_llvm_string(),
+            "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f16:16:16-f32:32:32-f64:64:64-f128:128:128-v64:64:64-v128:128:128-a:0:64"
+        );
     }
 }
