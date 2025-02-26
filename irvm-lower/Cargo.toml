@@ -11,3 +11,5 @@ license = "Apache-2.0"
 [dependencies]
 llvm-sys = "191.0.0"
 irvm = { path = "..", version = "0.1.0" }
+itertools = "0.14.0"
+typed-generational-arena = "0.2.6"
