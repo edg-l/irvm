@@ -1,12 +1,12 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     error::Error,
-    ffi::{CStr, CString},
+    ffi::CString,
     ptr::null_mut,
 };
 
 use irvm::{
-    block::{BlockIdx, InstIdx, Instruction},
+    block::{BlockIdx, Instruction},
     function::Function,
     module::Module,
     types::Type,
@@ -16,7 +16,7 @@ use irvm::{
 use itertools::Itertools;
 use llvm_sys::{
     core,
-    prelude::{LLVMBuilderRef, LLVMContextRef, LLVMTypeRef, LLVMValueRef},
+    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMTypeRef, LLVMValueRef},
 };
 
 pub fn lower_module(module: &Module) -> Result<(), Box<dyn Error>> {
@@ -25,7 +25,7 @@ pub fn lower_module(module: &Module) -> Result<(), Box<dyn Error>> {
         let module_name = CString::new(module.name.clone())?;
         let llvm_module = core::LLVMModuleCreateWithNameInContext(module_name.as_ptr(), ctx);
 
-        for (fun_idx, func) in module.functions.iter() {
+        for (_fun_idx, func) in module.functions.iter() {
             let name = CString::new(func.name.as_str()).unwrap();
 
             let ret_ty = lower_type(ctx, &func.result_type);
@@ -43,7 +43,9 @@ pub fn lower_module(module: &Module) -> Result<(), Box<dyn Error>> {
                 fn_ptr,
                 func: func.clone(),
                 builder,
+                blocks: Default::default(),
                 values: Default::default(),
+                block_args: Default::default(),
             };
 
             lower_block(&mut fn_ctx, func.entry_block, true);
@@ -64,16 +66,47 @@ struct FnCtx {
     fn_ptr: LLVMValueRef,
     func: Function,
     builder: LLVMBuilderRef,
+    blocks: HashMap<usize, LLVMBasicBlockRef>,
     values: HashMap<usize, LLVMValueRef>,
+    block_args: HashMap<usize, Vec<LLVMValueRef>>,
 }
 
-fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
+fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx, create_block: bool) {
     unsafe {
+        let block_name = CString::new(if block_idx.to_idx() == 0 {
+            "entry".to_string()
+        } else {
+            format!("bb{}", block_idx.to_idx())
+        })
+        .unwrap();
         let null_name = c"";
-        let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, null_name.as_ptr());
+        let block_ptr = if create_block {
+            core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr())
+        } else {
+            *ctx.blocks.get(&block_idx.to_idx()).unwrap()
+        };
         core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
 
-        let block = &ctx.func.blocks[block];
+        let preds = ctx.func.find_preds_for(block_idx);
+        let mut block_args = Vec::new();
+
+        if !preds.is_empty() {
+            let operand_len = preds.first().unwrap().1.len();
+
+            for i in 0..operand_len {
+                for (block_idx, operands) in &preds {
+                    let value = lower_operand(ctx, &operands[i]);
+                    let pred_ptr = ctx.blocks.get(&block_idx.to_idx()).unwrap();
+                    let label = core::LLVMGetBasicBlockName(*pred_ptr);
+                    let ty = core::LLVMTypeOf(value);
+                    block_args.push(core::LLVMBuildPhi(ctx.builder, ty, label));
+                }
+            }
+        }
+
+        ctx.block_args.insert(block_idx.to_idx(), Vec::new());
+
+        let block = &ctx.func.blocks[block_idx];
 
         for (inst_idx, inst) in block.instructions.iter() {
             match inst {
@@ -178,7 +211,52 @@ fn lower_block(ctx: &mut FnCtx, block: BlockIdx, is_entry: bool) {
                     core::LLVMBuildRetVoid(ctx.builder);
                 }
             }
-            irvm::block::Terminator::Br { block, arguments } => todo!(),
+            irvm::block::Terminator::Br { block, .. } => {
+                if let Entry::Vacant(e) = ctx.blocks.entry(block.to_idx()) {
+                    let block_name = CString::new(format!("bb{}", block.to_idx())).unwrap();
+                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
+                    e.insert(block_ptr);
+                }
+
+                let target_block = *ctx.blocks.get(&block.to_idx()).unwrap();
+
+                core::LLVMBuildBr(ctx.builder, target_block);
+            }
+            irvm::block::Terminator::CondBr {
+                then_block: if_block,
+                else_block: then_block,
+                cond,
+                ..
+            } => {
+                if let Entry::Vacant(e) = ctx.blocks.entry(if_block.to_idx()) {
+                    let block_name = CString::new(format!(
+                        "bb_{}_true_{}",
+                        block_idx.to_idx(),
+                        if_block.to_idx()
+                    ))
+                    .unwrap();
+                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
+                    e.insert(block_ptr);
+                }
+
+                if let Entry::Vacant(e) = ctx.blocks.entry(then_block.to_idx()) {
+                    let block_name = CString::new(format!(
+                        "bb_{}_false_{}",
+                        block_idx.to_idx(),
+                        then_block.to_idx()
+                    ))
+                    .unwrap();
+                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
+                    e.insert(block_ptr);
+                }
+
+                let cond = lower_operand(ctx, cond);
+
+                let if_block = *ctx.blocks.get(&if_block.to_idx()).unwrap();
+                let then_block = *ctx.blocks.get(&then_block.to_idx()).unwrap();
+
+                core::LLVMBuildCondBr(ctx.builder, cond, if_block, then_block);
+            }
         }
     }
 }
@@ -205,6 +283,9 @@ fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
                     irvm::value::ConstValue::Undef => core::LLVMGetUndef(ty_ptr),
                     irvm::value::ConstValue::Poison => core::LLVMGetPoison(ty_ptr),
                 }
+            }
+            Operand::BlockArgument { block_idx, nth, .. } => {
+                ctx.block_args.get(block_idx).unwrap()[*nth]
             }
         }
     }

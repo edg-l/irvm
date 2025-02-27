@@ -5,37 +5,38 @@ mod test {
     use std::error::Error;
 
     use irvm::{
-        block::Terminator,
-        datalayout::DataLayout,
+        block::{Block, IcmpCond},
         function::{Function, Parameter},
         module::Module,
-        target_lexicon::Triple,
         types::Type,
-        value::{ConstValue, Operand},
+        value::Operand,
     };
-    use typed_generational_arena::StandardArena;
 
     use crate::llvm::lower_module;
 
     #[test]
     fn test_function() -> Result<(), Box<dyn Error>> {
-        let mut module = Module {
-            name: "example".to_string(),
-            data_layout: DataLayout::default(),
-            target_triple: Triple::host(),
-            functions: StandardArena::new(),
-        };
+        let mut module = Module::new("example");
 
         let mut func = Function::new("main", &[Parameter::new(Type::Int(32))], Type::Int(32));
 
-        let value = func.entry_block().instr_add(
-            Operand::Parameter(0, Type::Int(32)),
-            Operand::Constant(ConstValue::Int(4), Type::Int(32)),
-            false,
-            false,
-        )?;
+        {
+            let param = func.param(0).unwrap();
+            let entry_block = func.entry_block;
 
-        func.entry_block().terminator = Terminator::Ret(Some(value));
+            let value = func.blocks[entry_block].instr_add(param, Operand::const_i32(4))?;
+
+            func.blocks[entry_block].instr_ret(Some(value.clone()));
+
+            let then_block = func.add_block(Block::new(&[]));
+            let else_block = func.add_block(Block::new(&[]));
+            let final_block = func.add_block(Block::new(&[Type::Int(32)]));
+
+            let cond =
+                func.blocks[entry_block].instr_icmp(IcmpCond::Eq, value, Operand::const_i32(6))?;
+
+            func.blocks[entry_block].instr_cond_jmp(then_block, else_block, cond, &[], &[]);
+        }
 
         module.functions.insert(func);
 

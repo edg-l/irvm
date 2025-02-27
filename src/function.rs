@@ -1,10 +1,13 @@
-use typed_generational_arena::StandardArena;
+use typed_generational_arena::{StandardIndex, StandardSlab};
 
 use crate::{
-    block::{Block, BlockIdx},
+    block::{Block, BlockIdx, Terminator},
     common::{CConv, DllStorageClass, Linkage, Visibility},
     types::Type,
+    value::Operand,
 };
+
+pub type FnIdx = StandardIndex<Function>;
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -13,7 +16,7 @@ pub struct Function {
     pub linkage: Option<Linkage>,
     pub visibility: Option<Visibility>,
     pub dll_storage: Option<DllStorageClass>,
-    pub blocks: StandardArena<Block>,
+    pub blocks: StandardSlab<Block>,
     pub entry_block: BlockIdx,
     pub result_type: Type,
     pub parameters: Vec<Parameter>,
@@ -76,8 +79,8 @@ impl Parameter {
 
 impl Function {
     pub fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
-        let mut blocks = StandardArena::new();
-        let entry_block = blocks.insert(Block::new(Vec::new()));
+        let mut blocks = StandardSlab::new();
+        let entry_block = blocks.insert(Block::new(&[]));
         Self {
             name: name.to_string(),
             cconv: None,
@@ -92,11 +95,46 @@ impl Function {
         }
     }
 
+    pub fn param(&self, idx: usize) -> Option<Operand> {
+        self.parameters
+            .get(idx)
+            .map(|x| Operand::Parameter(idx, x.ty.clone()))
+    }
+
     pub fn entry_block(&mut self) -> &mut Block {
         &mut self.blocks[self.entry_block]
     }
 
     pub fn add_block(&mut self, block: Block) -> BlockIdx {
         self.blocks.insert(block)
+    }
+
+    pub fn find_preds_for(&self, target_block: BlockIdx) -> Vec<(BlockIdx, Vec<Operand>)> {
+        let mut preds = Vec::new();
+        for (i, b) in self.blocks.iter() {
+            match &b.terminator {
+                Terminator::Ret(_) => {}
+                Terminator::Br { block, arguments } => {
+                    if block == &target_block {
+                        preds.push((i, arguments.clone()))
+                    }
+                }
+                Terminator::CondBr {
+                    then_block,
+                    else_block,
+                    if_args,
+                    then_args: else_args,
+                    ..
+                } => {
+                    if then_block == &target_block {
+                        preds.push((i, if_args.clone()))
+                    }
+                    if else_block == &target_block {
+                        preds.push((i, else_args.clone()))
+                    }
+                }
+            }
+        }
+        preds
     }
 }

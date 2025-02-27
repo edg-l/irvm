@@ -51,7 +51,6 @@ dependencies = [
  "irvm",
  "itertools",
  "llvm-sys",
- "typed-generational-arena",
 ]
 
 [[package]]

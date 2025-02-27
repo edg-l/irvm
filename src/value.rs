@@ -3,6 +3,11 @@ use crate::{block::InstIdx, types::Type};
 #[derive(Debug, Clone)]
 pub enum Operand {
     Parameter(usize, Type),
+    BlockArgument {
+        block_idx: usize,
+        nth: usize,
+        ty: Type,
+    },
     Value(InstIdx, Type),
     Constant(ConstValue, Type),
 }
@@ -12,9 +17,42 @@ impl Operand {
     pub fn get_type(&self) -> &Type {
         match self {
             Operand::Parameter(_, ty) => ty,
+            Operand::BlockArgument { ty, .. } => ty,
             Operand::Value(_, ty) => ty,
             Operand::Constant(_, ty) => ty,
         }
+    }
+
+    pub fn const_int(value: u64, width: u32) -> Self {
+        Self::Constant(ConstValue::Int(value), Type::Int(width))
+    }
+
+    pub fn const_bool(value: bool) -> Self {
+        Self::Constant(ConstValue::Bool(value), Type::Int(1))
+    }
+
+    pub fn const_i8(value: u64) -> Self {
+        Self::Constant(ConstValue::Int(value), Type::Int(8))
+    }
+
+    pub fn const_i16(value: u64) -> Self {
+        Self::Constant(ConstValue::Int(value), Type::Int(16))
+    }
+
+    pub fn const_i32(value: u64) -> Self {
+        Self::Constant(ConstValue::Int(value), Type::Int(32))
+    }
+
+    pub fn const_i64(value: u64) -> Self {
+        Self::Constant(ConstValue::Int(value), Type::Int(64))
+    }
+
+    pub fn const_f32(value: f32) -> Self {
+        Self::Constant(ConstValue::Float(value as f64), Type::Float)
+    }
+
+    pub fn const_f64(value: f64) -> Self {
+        Self::Constant(ConstValue::Float(value), Type::Double)
     }
 }
 

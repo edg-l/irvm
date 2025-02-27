@@ -1,14 +1,15 @@
-use typed_generational_arena::{StandardArena, StandardIndex};
+use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
 use crate::{
     common::CConv,
     error::Error,
+    function::Function,
     types::{FunctionType, Type},
     value::Operand,
 };
 
-pub type BlockIdx = StandardIndex<Block>;
-pub type InstIdx = StandardIndex<Instruction>;
+pub type BlockIdx = StandardSlabIndex<Block>;
+pub type InstIdx = StandardSlabIndex<Instruction>;
 
 /// A Block.
 ///
@@ -16,8 +17,8 @@ pub type InstIdx = StandardIndex<Instruction>;
 #[derive(Debug, Clone)]
 pub struct Block {
     /// Arguments are made to model phi nodes.
-    pub arguments: Vec<Operand>,
-    pub instructions: StandardArena<Instruction>,
+    pub arguments: Vec<Type>,
+    pub instructions: StandardSlab<Instruction>,
     pub terminator: Terminator,
 }
 
@@ -36,6 +37,13 @@ pub enum Terminator {
     Br {
         block: BlockIdx,
         arguments: Vec<Operand>,
+    },
+    CondBr {
+        then_block: BlockIdx,
+        else_block: BlockIdx,
+        cond: Operand,
+        if_args: Vec<Operand>,
+        then_args: Vec<Operand>,
     },
 }
 
@@ -230,7 +238,7 @@ pub struct CallReturnAttrs {
 impl Default for Block {
     fn default() -> Self {
         Self {
-            instructions: StandardArena::new(),
+            instructions: StandardSlab::new(),
             terminator: Terminator::Ret(None),
             arguments: Vec::new(),
         }
@@ -258,8 +266,29 @@ macro_rules! binop_float {
 }
 
 macro_rules! binop_with_overflow_flags {
-    ($name:ident, $variant:ident) => {
-        pub fn $name(
+    ($name:ident, $name_ex:ident, $variant:ident) => {
+        pub fn $name(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
+            if lhs.get_type() != rhs.get_type() {
+                return Err(Error::TypeMismatch {
+                    found: rhs.get_type().clone(),
+                    expected: lhs.get_type().clone(),
+                });
+            }
+
+            let result_type = lhs.get_type().clone();
+            let idx = self
+                .instructions
+                .insert(Instruction::BinaryOp(BinaryOp::$variant {
+                    lhs,
+                    rhs,
+                    nsw: false,
+                    nuw: false,
+                }));
+
+            Ok(Operand::Value(idx, result_type))
+        }
+
+        pub fn $name_ex(
             &mut self,
             lhs: Operand,
             rhs: Operand,
@@ -289,17 +318,45 @@ macro_rules! binop_with_overflow_flags {
 }
 
 impl Block {
-    pub fn new(arguments: Vec<Operand>) -> Self {
+    pub fn new(arguments: &[Type]) -> Self {
         Self {
-            instructions: StandardArena::new(),
+            instructions: StandardSlab::new(),
             terminator: Terminator::Ret(None),
-            arguments,
+            arguments: arguments.to_vec(),
         }
     }
 
-    binop_with_overflow_flags!(instr_add, Add);
-    binop_with_overflow_flags!(instr_sub, Sub);
-    binop_with_overflow_flags!(instr_mul, Mul);
+    pub fn instr_ret(&mut self, value: Option<Operand>) {
+        self.terminator = Terminator::Ret(value);
+    }
+
+    pub fn instr_jmp(&mut self, target: BlockIdx, arguments: &[Operand]) {
+        self.terminator = Terminator::Br {
+            block: target,
+            arguments: arguments.to_vec(),
+        };
+    }
+
+    pub fn instr_cond_jmp(
+        &mut self,
+        then_block: BlockIdx,
+        else_block: BlockIdx,
+        cond: Operand,
+        then_block_args: &[Operand],
+        else_block_args: &[Operand],
+    ) {
+        self.terminator = Terminator::CondBr {
+            then_block,
+            else_block,
+            cond,
+            if_args: then_block_args.to_vec(),
+            then_args: else_block_args.to_vec(),
+        };
+    }
+
+    binop_with_overflow_flags!(instr_add, instr_add_ex, Add);
+    binop_with_overflow_flags!(instr_sub, instr_sub_ex, Sub);
+    binop_with_overflow_flags!(instr_mul, instr_mul_ex, Mul);
 
     pub fn instr_div(
         &mut self,
@@ -566,5 +623,30 @@ impl Block {
             .insert(Instruction::OtherOp(OtherOp::Call(call_op)));
 
         Ok(Operand::Value(idx, ret_ty))
+    }
+
+    pub fn instr_icmp(
+        &mut self,
+        cond: IcmpCond,
+        lhs: Operand,
+        rhs: Operand,
+    ) -> Result<Operand, Error> {
+        if lhs.get_type() != rhs.get_type() {
+            return Err(Error::TypeMismatch {
+                found: rhs.get_type().clone(),
+                expected: lhs.get_type().clone(),
+            });
+        }
+
+        let result_type = lhs.get_type().clone();
+        let idx = self
+            .instructions
+            .insert(Instruction::OtherOp(OtherOp::Icmp { cond, lhs, rhs }));
+
+        if let Type::Vector(_) = result_type {
+            Ok(Operand::Value(idx, result_type))
+        } else {
+            Ok(Operand::Value(idx, Type::Int(1)))
+        }
     }
 }
