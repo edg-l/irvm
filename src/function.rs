@@ -1,4 +1,4 @@
-use typed_generational_arena::{StandardIndex, StandardSlab};
+use typed_generational_arena::{StandardIndex, StandardSlab, StandardSlabIndex};
 
 use crate::{
     block::{Block, BlockIdx, Terminator},
@@ -8,10 +8,11 @@ use crate::{
     value::Operand,
 };
 
-pub type FnIdx = StandardIndex<Function>;
+pub type FnIdx = StandardSlabIndex<Function>;
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub id: Option<FnIdx>,
     pub name: String,
     pub cconv: Option<CConv>,
     pub linkage: Option<Linkage>,
@@ -79,11 +80,12 @@ impl Parameter {
 }
 
 impl Function {
-    pub fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
+    pub(crate) fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
         let mut blocks = StandardSlab::new();
         let entry_block = blocks.insert(Block::new(&[]));
         blocks[entry_block].id = Some(entry_block);
         Self {
+            id: None,
             name: name.to_string(),
             cconv: None,
             linkage: None,
@@ -95,6 +97,10 @@ impl Function {
             parameters: params.to_vec(),
             align: None,
         }
+    }
+
+    pub fn get_id(&self) -> FnIdx {
+        self.id.unwrap()
     }
 
     pub fn param(&self, nth: usize) -> Result<Operand, Error> {

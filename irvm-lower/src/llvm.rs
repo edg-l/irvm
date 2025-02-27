@@ -1,4 +1,10 @@
-use std::{collections::HashMap, error::Error, ffi::{CStr, CString}, ptr::null_mut, rc::Rc};
+use std::{
+    collections::HashMap,
+    error::Error,
+    ffi::{CStr, CString},
+    ptr::null_mut,
+    rc::Rc,
+};
 
 use irvm::{
     block::{BlockIdx, Instruction},
@@ -70,7 +76,11 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
         core::LLVMDumpModule(llvm_module);
 
         let mut out_msg: *mut i8 = null_mut();
-        let ok  = llvm_sys::analysis::LLVMVerifyModule(llvm_module, llvm_sys::analysis::LLVMVerifierFailureAction::LLVMPrintMessageAction, &raw mut out_msg);
+        let ok = llvm_sys::analysis::LLVMVerifyModule(
+            llvm_module,
+            llvm_sys::analysis::LLVMVerifierFailureAction::LLVMPrintMessageAction,
+            &raw mut out_msg,
+        );
         if ok != 0 {
             let msg = CStr::from_ptr(out_msg);
             dbg!(msg);

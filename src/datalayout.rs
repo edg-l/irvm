@@ -190,6 +190,227 @@ impl Default for DataLayout {
 }
 
 impl DataLayout {
+    pub fn default_host() -> Self {
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Self::default_linux_x86_64()
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            Self::default_macos_aarch64()
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn default_linux_x86_64() -> Self {
+        // example linux x86_64 "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+        Self {
+            endianess: Endianess::Little,
+            stack_alignment: Some(128),
+            address_space: None,
+            alloca_address_space: None,
+            globals_address_space: None,
+            mangling: Some(Mangling::Elf),
+            native_integer_widths: vec![8, 16, 32, 64],
+            non_integral_address_spaces: Vec::new(),
+
+            type_infos: vec![
+                TypeLayout::Pointer {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                    address_space: None,
+                    index_size: None,
+                },
+                TypeLayout::Pointer {
+                    size: 32,
+                    abi: 32,
+                    prefered: None,
+                    address_space: Some(270),
+                    index_size: None,
+                },
+                TypeLayout::Pointer {
+                    size: 32,
+                    abi: 32,
+                    prefered: None,
+                    address_space: Some(271),
+                    index_size: None,
+                },
+                TypeLayout::Pointer {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                    address_space: Some(272),
+                    index_size: None,
+                },
+                TypeLayout::Int {
+                    size: 1,
+                    abi: 8,
+                    prefered: Some(8),
+                },
+                TypeLayout::Int {
+                    size: 8,
+                    abi: 8,
+                    prefered: Some(8),
+                },
+                TypeLayout::Int {
+                    size: 16,
+                    abi: 16,
+                    prefered: Some(16),
+                },
+                TypeLayout::Int {
+                    size: 32,
+                    abi: 32,
+                    prefered: Some(32),
+                },
+                TypeLayout::Int {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                },
+                TypeLayout::Int {
+                    size: 128,
+                    abi: 128,
+                    prefered: Some(128),
+                },
+                TypeLayout::Float {
+                    size: 16,
+                    abi: 16,
+                    prefered: Some(16),
+                },
+                TypeLayout::Float {
+                    size: 32,
+                    abi: 32,
+                    prefered: Some(32),
+                },
+                TypeLayout::Float {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                },
+                TypeLayout::Float {
+                    size: 80,
+                    abi: 128,
+                    prefered: None,
+                },
+                TypeLayout::Float {
+                    size: 128,
+                    abi: 128,
+                    prefered: Some(128),
+                },
+                TypeLayout::Vector {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                },
+                TypeLayout::Vector {
+                    size: 128,
+                    abi: 128,
+                    prefered: Some(128),
+                },
+                TypeLayout::Aggregate {
+                    abi: 0,
+                    prefered: Some(64),
+                },
+            ],
+        }
+    }
+
+    pub fn default_macos_aarch64() -> Self {
+        // example macos arm "e-m:o-i64:64-i128:128-n32:64-S128-Fn32"
+        Self {
+            endianess: Endianess::Little,
+            stack_alignment: Some(128),
+            address_space: None,
+            alloca_address_space: None,
+            globals_address_space: None,
+            mangling: Some(Mangling::MachO),
+            native_integer_widths: vec![32, 64],
+            non_integral_address_spaces: Vec::new(),
+
+            type_infos: vec![
+                TypeLayout::Pointer {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                    address_space: None,
+                    index_size: None,
+                },
+                TypeLayout::Int {
+                    size: 1,
+                    abi: 8,
+                    prefered: Some(8),
+                },
+                TypeLayout::Int {
+                    size: 8,
+                    abi: 8,
+                    prefered: Some(8),
+                },
+                TypeLayout::Int {
+                    size: 16,
+                    abi: 16,
+                    prefered: Some(16),
+                },
+                TypeLayout::Int {
+                    size: 32,
+                    abi: 32,
+                    prefered: Some(32),
+                },
+                TypeLayout::Int {
+                    size: 64,
+                    abi: 64,
+                    prefered: None,
+                },
+                TypeLayout::Int {
+                    size: 128,
+                    abi: 128,
+                    prefered: None,
+                },
+                TypeLayout::Float {
+                    size: 16,
+                    abi: 16,
+                    prefered: Some(16),
+                },
+                TypeLayout::Float {
+                    size: 32,
+                    abi: 32,
+                    prefered: Some(32),
+                },
+                TypeLayout::Float {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                },
+                TypeLayout::Float {
+                    size: 80,
+                    abi: 128,
+                    prefered: None,
+                },
+                TypeLayout::Float {
+                    size: 128,
+                    abi: 128,
+                    prefered: Some(128),
+                },
+                TypeLayout::Vector {
+                    size: 64,
+                    abi: 64,
+                    prefered: Some(64),
+                },
+                TypeLayout::Vector {
+                    size: 128,
+                    abi: 128,
+                    prefered: Some(128),
+                },
+                TypeLayout::Aggregate {
+                    abi: 0,
+                    prefered: Some(64),
+                },
+                TypeLayout::FunctionPointer {
+                    align_independent: false,
+                    abi: 32,
+                },
+            ],
+        }
+    }
+
     pub fn get_type_size(&self, ty: &Type) -> u32 {
         match ty {
             Type::Int(bits) => {
@@ -688,22 +909,6 @@ impl DataLayout {
             }
         }
 
-        if let Some(stack_align) = self.stack_alignment {
-            target.push_str(&format!("-S{stack_align}"));
-        }
-
-        if let Some(address_space) = self.address_space {
-            target.push_str(&format!("-P{address_space}"));
-        }
-
-        if let Some(globals_address_space) = self.globals_address_space {
-            target.push_str(&format!("-G{globals_address_space}"));
-        }
-
-        if let Some(alloca_address_space) = self.alloca_address_space {
-            target.push_str(&format!("-A{alloca_address_space}"));
-        }
-
         for ty in &self.type_infos {
             match ty {
                 TypeLayout::Pointer {
@@ -796,6 +1001,22 @@ impl DataLayout {
                     }
                 }
             }
+        }
+
+        if let Some(stack_align) = self.stack_alignment {
+            target.push_str(&format!("-S{stack_align}"));
+        }
+
+        if let Some(address_space) = self.address_space {
+            target.push_str(&format!("-P{address_space}"));
+        }
+
+        if let Some(globals_address_space) = self.globals_address_space {
+            target.push_str(&format!("-G{globals_address_space}"));
+        }
+
+        if let Some(alloca_address_space) = self.alloca_address_space {
+            target.push_str(&format!("-A{alloca_address_space}"));
         }
 
         if !self.native_integer_widths.is_empty() {
