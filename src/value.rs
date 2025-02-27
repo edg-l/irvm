@@ -1,4 +1,7 @@
-use crate::{block::InstIdx, types::Type};
+use crate::{
+    block::{BlockIdx, InstIdx},
+    types::Type,
+};
 
 #[derive(Debug, Clone)]
 pub enum Operand {
@@ -8,7 +11,7 @@ pub enum Operand {
         nth: usize,
         ty: Type,
     },
-    Value(InstIdx, Type),
+    Value(BlockIdx, InstIdx, Type),
     Constant(ConstValue, Type),
 }
 
@@ -18,7 +21,7 @@ impl Operand {
         match self {
             Operand::Parameter(_, ty) => ty,
             Operand::BlockArgument { ty, .. } => ty,
-            Operand::Value(_, ty) => ty,
+            Operand::Value(_, _, ty) => ty,
             Operand::Constant(_, ty) => ty,
         }
     }

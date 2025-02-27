@@ -82,6 +82,7 @@ impl Function {
     pub fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
         let mut blocks = StandardSlab::new();
         let entry_block = blocks.insert(Block::new(&[]));
+        blocks[entry_block].id = Some(entry_block);
         Self {
             name: name.to_string(),
             cconv: None,

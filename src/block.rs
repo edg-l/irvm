@@ -252,7 +252,7 @@ macro_rules! binop_float {
                 .instructions
                 .insert(Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs }));
 
-            Ok(Operand::Value(idx, result_type))
+            Ok(Operand::Value(self.id(), idx, result_type))
         }
     };
 }
@@ -277,7 +277,7 @@ macro_rules! binop_with_overflow_flags {
                     nuw: false,
                 }));
 
-            Ok(Operand::Value(idx, result_type))
+            Ok(Operand::Value(self.id(), idx, result_type))
         }
 
         pub fn $name_ex(
@@ -304,7 +304,7 @@ macro_rules! binop_with_overflow_flags {
                     nuw,
                 }));
 
-            Ok(Operand::Value(idx, result_type))
+            Ok(Operand::Value(self.id(), idx, result_type))
         }
     };
 }
@@ -393,7 +393,7 @@ impl Block {
                 exact,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_rem(
@@ -414,7 +414,7 @@ impl Block {
             .instructions
             .insert(Instruction::BinaryOp(BinaryOp::Rem { lhs, rhs, signed }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     binop_float!(instr_fadd, FAdd);
@@ -447,7 +447,7 @@ impl Block {
                 nuw,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_lshr(
@@ -472,7 +472,7 @@ impl Block {
                 exact,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_ashr(
@@ -497,7 +497,7 @@ impl Block {
                 exact,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_and(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
@@ -516,7 +516,7 @@ impl Block {
                 rhs,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_or(
@@ -541,7 +541,7 @@ impl Block {
                 disjoint,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_xor(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
@@ -560,7 +560,7 @@ impl Block {
                 rhs,
             }));
 
-        Ok(Operand::Value(idx, result_type))
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_alloca(
@@ -579,7 +579,7 @@ impl Block {
                 addr_space: None,
             }));
 
-        Ok(Operand::Value(idx, Type::Ptr(None)))
+        Ok(Operand::Value(self.id(), idx, Type::Ptr(None)))
     }
 
     pub fn instr_alloca_ex(
@@ -600,7 +600,7 @@ impl Block {
                 addr_space,
             }));
 
-        Ok(Operand::Value(idx, Type::Ptr(None)))
+        Ok(Operand::Value(self.id(), idx, Type::Ptr(None)))
     }
 
     pub fn instr_call(
@@ -624,7 +624,7 @@ impl Block {
                 fn_target: CallableValue::Symbol(symbol.to_string()),
             })));
 
-        Ok(Operand::Value(idx, ret_ty.clone()))
+        Ok(Operand::Value(self.id(), idx, ret_ty.clone()))
     }
 
     pub fn instr_call_ex(&mut self, call_op: CallOp) -> Result<Operand, Error> {
@@ -633,7 +633,7 @@ impl Block {
             .instructions
             .insert(Instruction::OtherOp(OtherOp::Call(call_op)));
 
-        Ok(Operand::Value(idx, ret_ty))
+        Ok(Operand::Value(self.id(), idx, ret_ty))
     }
 
     pub fn instr_icmp(
@@ -655,9 +655,9 @@ impl Block {
             .insert(Instruction::OtherOp(OtherOp::Icmp { cond, lhs, rhs }));
 
         if let Type::Vector(_) = result_type {
-            Ok(Operand::Value(idx, result_type))
+            Ok(Operand::Value(self.id(), idx, result_type))
         } else {
-            Ok(Operand::Value(idx, Type::Int(1)))
+            Ok(Operand::Value(self.id(), idx, Type::Int(1)))
         }
     }
 }
