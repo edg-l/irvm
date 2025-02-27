@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, ffi::CString, ptr::null_mut, rc::Rc};
+use std::{collections::HashMap, error::Error, ffi::{CStr, CString}, ptr::null_mut, rc::Rc};
 
 use irvm::{
     block::{BlockIdx, Instruction},
@@ -19,6 +19,11 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
         let ctx = core::LLVMContextCreate();
         let module_name = CString::new(module.name.clone())?;
         let llvm_module = core::LLVMModuleCreateWithNameInContext(module_name.as_ptr(), ctx);
+
+        let datalayout_str = CString::new(module.data_layout.to_llvm_string()).unwrap();
+        core::LLVMSetDataLayout(llvm_module, datalayout_str.as_ptr());
+        let triple_str = CString::new(module.target_triple.to_string()).unwrap();
+        core::LLVMSetTarget(llvm_module, triple_str.as_ptr());
 
         let mut functions: HashMap<_, _> = Default::default();
         let builder = core::LLVMCreateBuilderInContext(ctx);
@@ -64,6 +69,13 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
 
         core::LLVMDumpModule(llvm_module);
 
+        let mut out_msg: *mut i8 = null_mut();
+        let ok  = llvm_sys::analysis::LLVMVerifyModule(llvm_module, llvm_sys::analysis::LLVMVerifierFailureAction::LLVMPrintMessageAction, &raw mut out_msg);
+        if ok != 0 {
+            let msg = CStr::from_ptr(out_msg);
+            dbg!(msg);
+        }
+        assert_eq!(ok, 0);
         core::LLVMDisposeModule(llvm_module);
         core::LLVMContextDispose(ctx);
     }
