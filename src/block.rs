@@ -3,6 +3,7 @@ use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 use crate::{
     common::CConv,
     error::Error,
+    function::FnIdx,
     types::{FunctionType, Type},
     value::Operand,
 };
@@ -115,8 +116,6 @@ pub enum BitwiseBinaryOp {
     Shl {
         lhs: Operand,
         rhs: Operand,
-        nsw: bool,
-        nuw: bool,
     },
     Lshr {
         lhs: Operand,
@@ -225,8 +224,8 @@ pub enum FcmpCond {
 
 #[derive(Debug, Clone)]
 pub enum CallableValue {
-    Symbol(String),
-    Pointer(Operand),
+    Symbol(FnIdx),
+    Pointer(Operand, FunctionType),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -423,13 +422,7 @@ impl Block {
     binop_float!(instr_fdiv, FDiv);
     binop_float!(instr_frem, FRem);
 
-    pub fn instr_shl(
-        &mut self,
-        lhs: Operand,
-        rhs: Operand,
-        nsw: bool,
-        nuw: bool,
-    ) -> Result<Operand, Error> {
+    pub fn instr_shl(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
                 found: rhs.get_type().clone(),
@@ -443,8 +436,6 @@ impl Block {
             .insert(Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Shl {
                 lhs,
                 rhs,
-                nsw,
-                nuw,
             }));
 
         Ok(Operand::Value(self.id(), idx, result_type))
@@ -605,7 +596,7 @@ impl Block {
 
     pub fn instr_call(
         &mut self,
-        symbol: &str,
+        fn_idx: FnIdx,
         params: &[Operand],
         ret_ty: &Type,
     ) -> Result<Operand, Error> {
@@ -621,7 +612,7 @@ impl Block {
                 ret_attrs: None,
                 addr_space: None,
                 fn_ty: None,
-                fn_target: CallableValue::Symbol(symbol.to_string()),
+                fn_target: CallableValue::Symbol(fn_idx),
             })));
 
         Ok(Operand::Value(self.id(), idx, ret_ty.clone()))
