@@ -3,7 +3,6 @@ use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 use crate::{
     common::CConv,
     error::Error,
-    function::Function,
     types::{FunctionType, Type},
     value::Operand,
 };
@@ -16,6 +15,9 @@ pub type InstIdx = StandardSlabIndex<Instruction>;
 /// Terminator default to Ret.
 #[derive(Debug, Clone)]
 pub struct Block {
+    // The id is always set, but this is needed because first we need to
+    // insert the block into the arena to get an id.
+    pub(crate) id: Option<BlockIdx>,
     /// Arguments are made to model phi nodes.
     pub arguments: Vec<Type>,
     pub instructions: StandardSlab<Instruction>,
@@ -235,16 +237,6 @@ pub struct CallReturnAttrs {
     pub inreg: bool,
 }
 
-impl Default for Block {
-    fn default() -> Self {
-        Self {
-            instructions: StandardSlab::new(),
-            terminator: Terminator::Ret(None),
-            arguments: Vec::new(),
-        }
-    }
-}
-
 macro_rules! binop_float {
     ($name:ident, $variant:ident) => {
         pub fn $name(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
@@ -267,7 +259,7 @@ macro_rules! binop_float {
 
 macro_rules! binop_with_overflow_flags {
     ($name:ident, $name_ex:ident, $variant:ident) => {
-        pub fn $name(&mut self, lhs: Operand, rhs: Operand) -> Result<Operand, Error> {
+        pub fn $name(&mut self, lhs: &Operand, rhs: &Operand) -> Result<Operand, Error> {
             if lhs.get_type() != rhs.get_type() {
                 return Err(Error::TypeMismatch {
                     found: rhs.get_type().clone(),
@@ -279,8 +271,8 @@ macro_rules! binop_with_overflow_flags {
             let idx = self
                 .instructions
                 .insert(Instruction::BinaryOp(BinaryOp::$variant {
-                    lhs,
-                    rhs,
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
                     nsw: false,
                     nuw: false,
                 }));
@@ -290,8 +282,8 @@ macro_rules! binop_with_overflow_flags {
 
         pub fn $name_ex(
             &mut self,
-            lhs: Operand,
-            rhs: Operand,
+            lhs: &Operand,
+            rhs: &Operand,
             nsw: bool,
             nuw: bool,
         ) -> Result<Operand, Error> {
@@ -306,8 +298,8 @@ macro_rules! binop_with_overflow_flags {
             let idx = self
                 .instructions
                 .insert(Instruction::BinaryOp(BinaryOp::$variant {
-                    lhs,
-                    rhs,
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
                     nsw,
                     nuw,
                 }));
@@ -318,16 +310,35 @@ macro_rules! binop_with_overflow_flags {
 }
 
 impl Block {
-    pub fn new(arguments: &[Type]) -> Self {
+    pub(crate) fn new(arguments: &[Type]) -> Self {
         Self {
             instructions: StandardSlab::new(),
             terminator: Terminator::Ret(None),
             arguments: arguments.to_vec(),
+            id: None,
         }
     }
 
-    pub fn instr_ret(&mut self, value: Option<Operand>) {
-        self.terminator = Terminator::Ret(value);
+    pub fn id(&self) -> BlockIdx {
+        self.id.unwrap()
+    }
+
+    pub fn arg(&self, nth: usize) -> Result<Operand, Error> {
+        self.arguments
+            .get(nth)
+            .map(|x| Operand::BlockArgument {
+                block_idx: self.id.unwrap().to_idx(),
+                nth,
+                ty: x.clone(),
+            })
+            .ok_or_else(|| Error::BlockArgNotFound {
+                block_id: self.id(),
+                nth,
+            })
+    }
+
+    pub fn instr_ret(&mut self, value: Option<&Operand>) {
+        self.terminator = Terminator::Ret(value.cloned());
     }
 
     pub fn instr_jmp(&mut self, target: BlockIdx, arguments: &[Operand]) {
@@ -341,14 +352,14 @@ impl Block {
         &mut self,
         then_block: BlockIdx,
         else_block: BlockIdx,
-        cond: Operand,
+        cond: &Operand,
         then_block_args: &[Operand],
         else_block_args: &[Operand],
     ) {
         self.terminator = Terminator::CondBr {
             then_block,
             else_block,
-            cond,
+            cond: cond.clone(),
             if_args: then_block_args.to_vec(),
             then_args: else_block_args.to_vec(),
         };
@@ -360,8 +371,8 @@ impl Block {
 
     pub fn instr_div(
         &mut self,
-        lhs: Operand,
-        rhs: Operand,
+        lhs: &Operand,
+        rhs: &Operand,
         signed: bool,
         exact: bool,
     ) -> Result<Operand, Error> {
@@ -376,8 +387,8 @@ impl Block {
         let idx = self
             .instructions
             .insert(Instruction::BinaryOp(BinaryOp::Div {
-                lhs,
-                rhs,
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
                 signed,
                 exact,
             }));
@@ -406,11 +417,11 @@ impl Block {
         Ok(Operand::Value(idx, result_type))
     }
 
-    binop_float!(inst_fadd, FAdd);
-    binop_float!(inst_fsub, FSub);
-    binop_float!(inst_fmul, FMul);
-    binop_float!(inst_fdiv, FDiv);
-    binop_float!(inst_frem, FRem);
+    binop_float!(instr_fadd, FAdd);
+    binop_float!(instr_fsub, FSub);
+    binop_float!(instr_fmul, FMul);
+    binop_float!(instr_fdiv, FDiv);
+    binop_float!(instr_frem, FRem);
 
     pub fn instr_shl(
         &mut self,

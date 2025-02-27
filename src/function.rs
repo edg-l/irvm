@@ -3,6 +3,7 @@ use typed_generational_arena::{StandardIndex, StandardSlab};
 use crate::{
     block::{Block, BlockIdx, Terminator},
     common::{CConv, DllStorageClass, Linkage, Visibility},
+    error::Error,
     types::Type,
     value::Operand,
 };
@@ -95,18 +96,24 @@ impl Function {
         }
     }
 
-    pub fn param(&self, idx: usize) -> Option<Operand> {
+    pub fn param(&self, nth: usize) -> Result<Operand, Error> {
         self.parameters
-            .get(idx)
-            .map(|x| Operand::Parameter(idx, x.ty.clone()))
+            .get(nth)
+            .map(|x| Operand::Parameter(nth, x.ty.clone()))
+            .ok_or_else(|| Error::FunctionParamNotFound {
+                name: self.name.clone(),
+                nth,
+            })
     }
 
     pub fn entry_block(&mut self) -> &mut Block {
         &mut self.blocks[self.entry_block]
     }
 
-    pub fn add_block(&mut self, block: Block) -> BlockIdx {
-        self.blocks.insert(block)
+    pub fn add_block(&mut self, arguments: &[Type]) -> BlockIdx {
+        let id = self.blocks.insert(Block::new(arguments));
+        self.blocks[id].id = Some(id);
+        id
     }
 
     pub fn find_preds_for(&self, target_block: BlockIdx) -> Vec<(BlockIdx, Vec<Operand>)> {
@@ -123,14 +130,14 @@ impl Function {
                     then_block,
                     else_block,
                     if_args,
-                    then_args: else_args,
+                    then_args,
                     ..
                 } => {
                     if then_block == &target_block {
                         preds.push((i, if_args.clone()))
                     }
                     if else_block == &target_block {
-                        preds.push((i, else_args.clone()))
+                        preds.push((i, then_args.clone()))
                     }
                 }
             }

@@ -15,11 +15,11 @@ use irvm::{
 
 use itertools::Itertools;
 use llvm_sys::{
-    core,
+    LLVMIntPredicate, core,
     prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMTypeRef, LLVMValueRef},
 };
 
-pub fn lower_module(module: &Module) -> Result<(), Box<dyn Error>> {
+pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
     unsafe {
         let ctx = core::LLVMContextCreate();
         let module_name = CString::new(module.name.clone())?;
@@ -73,42 +73,14 @@ struct FnCtx {
 
 fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx, create_block: bool) {
     unsafe {
-        let block_name = CString::new(if block_idx.to_idx() == 0 {
-            "entry".to_string()
-        } else {
-            format!("bb{}", block_idx.to_idx())
-        })
-        .unwrap();
         let null_name = c"";
         let block_ptr = if create_block {
-            core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr())
+            add_block(ctx, block_idx, None)
         } else {
             *ctx.blocks.get(&block_idx.to_idx()).unwrap()
         };
-        core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
 
-        let preds = ctx.func.find_preds_for(block_idx);
-        let mut block_args = Vec::new();
-
-        if !preds.is_empty() {
-            let operand_len = preds.first().unwrap().1.len();
-
-            for i in 0..operand_len {
-                for (block_idx, operands) in &preds {
-                    let value = lower_operand(ctx, &operands[i]);
-                    let pred_ptr = ctx.blocks.get(&block_idx.to_idx()).unwrap();
-                    let label = core::LLVMGetBasicBlockName(*pred_ptr);
-                    let ty = core::LLVMTypeOf(value);
-                    block_args.push(core::LLVMBuildPhi(ctx.builder, ty, label));
-                }
-            }
-        }
-
-        ctx.block_args.insert(block_idx.to_idx(), Vec::new());
-
-        let block = &ctx.func.blocks[block_idx];
-
-        for (inst_idx, inst) in block.instructions.iter() {
+        for (inst_idx, inst) in ctx.func.blocks[block_idx].instructions.iter() {
             match inst {
                 Instruction::BinaryOp(binary_op) => match binary_op {
                     irvm::block::BinaryOp::Add { lhs, rhs, nsw, nuw } => {
@@ -196,31 +168,55 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx, create_block: bool) {
                     irvm::block::OtherOp::Call(call_op) => {
                         // core::LLVMBuildCall2(ctx.builder, arg2, Fn, Args, NumArgs, Name)
                     }
-                    irvm::block::OtherOp::Icmp { cond, lhs, rhs } => todo!(),
+                    irvm::block::OtherOp::Icmp { cond, lhs, rhs } => {
+                        let lhs_val = lower_operand(ctx, lhs);
+                        let rhs_val = lower_operand(ctx, rhs);
+                        let value = core::LLVMBuildICmp(
+                            ctx.builder,
+                            match cond {
+                                irvm::block::IcmpCond::Eq => LLVMIntPredicate::LLVMIntEQ,
+                                irvm::block::IcmpCond::Ne => LLVMIntPredicate::LLVMIntNE,
+                                irvm::block::IcmpCond::Ugt => LLVMIntPredicate::LLVMIntUGT,
+                                irvm::block::IcmpCond::Uge => LLVMIntPredicate::LLVMIntUGE,
+                                irvm::block::IcmpCond::Ult => LLVMIntPredicate::LLVMIntULT,
+                                irvm::block::IcmpCond::Ule => LLVMIntPredicate::LLVMIntULE,
+                                irvm::block::IcmpCond::Sgt => LLVMIntPredicate::LLVMIntSGT,
+                                irvm::block::IcmpCond::Sge => LLVMIntPredicate::LLVMIntSGE,
+                                irvm::block::IcmpCond::Slt => LLVMIntPredicate::LLVMIntSLT,
+                                irvm::block::IcmpCond::Sle => LLVMIntPredicate::LLVMIntSLE,
+                            },
+                            lhs_val,
+                            rhs_val,
+                            null_name.as_ptr(),
+                        );
+                        ctx.values.insert(inst_idx.to_idx(), value);
+                    }
                     irvm::block::OtherOp::Fcmp { cond, lhs, rhs } => todo!(),
                 },
             }
         }
 
-        match &block.terminator {
+        match ctx.func.blocks[block_idx].terminator.clone() {
             irvm::block::Terminator::Ret(op) => {
                 if let Some(op) = op {
-                    let value = lower_operand(ctx, op);
+                    let value = lower_operand(ctx, &op);
                     core::LLVMBuildRet(ctx.builder, value);
                 } else {
                     core::LLVMBuildRetVoid(ctx.builder);
                 }
             }
-            irvm::block::Terminator::Br { block, .. } => {
-                if let Entry::Vacant(e) = ctx.blocks.entry(block.to_idx()) {
-                    let block_name = CString::new(format!("bb{}", block.to_idx())).unwrap();
-                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
-                    e.insert(block_ptr);
+            irvm::block::Terminator::Br {
+                block: jmp_block, ..
+            } => {
+                if !ctx.blocks.contains_key(&jmp_block.to_idx()) {
+                    add_block(ctx, jmp_block, Some("br".to_string()));
+                    core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
                 }
 
-                let target_block = *ctx.blocks.get(&block.to_idx()).unwrap();
+                let target_block = *ctx.blocks.get(&jmp_block.to_idx()).unwrap();
 
                 core::LLVMBuildBr(ctx.builder, target_block);
+                lower_block(ctx, jmp_block, false);
             }
             irvm::block::Terminator::CondBr {
                 then_block: if_block,
@@ -228,36 +224,90 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx, create_block: bool) {
                 cond,
                 ..
             } => {
-                if let Entry::Vacant(e) = ctx.blocks.entry(if_block.to_idx()) {
-                    let block_name = CString::new(format!(
-                        "bb_{}_true_{}",
-                        block_idx.to_idx(),
-                        if_block.to_idx()
-                    ))
-                    .unwrap();
-                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
-                    e.insert(block_ptr);
+                if !ctx.blocks.contains_key(&if_block.to_idx()) {
+                    add_block(
+                        ctx,
+                        if_block,
+                        Some(format!("{}_true_{}", block_idx.to_idx(), if_block.to_idx())),
+                    );
+                    core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
                 }
 
-                if let Entry::Vacant(e) = ctx.blocks.entry(then_block.to_idx()) {
-                    let block_name = CString::new(format!(
-                        "bb_{}_false_{}",
-                        block_idx.to_idx(),
-                        then_block.to_idx()
-                    ))
-                    .unwrap();
-                    let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
-                    e.insert(block_ptr);
+                if !ctx.blocks.contains_key(&then_block.to_idx()) {
+                    add_block(
+                        ctx,
+                        then_block,
+                        Some(format!(
+                            "{}_false_{}",
+                            block_idx.to_idx(),
+                            then_block.to_idx()
+                        )),
+                    );
+                    core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
                 }
 
-                let cond = lower_operand(ctx, cond);
+                let cond = lower_operand(ctx, &cond);
 
-                let if_block = *ctx.blocks.get(&if_block.to_idx()).unwrap();
-                let then_block = *ctx.blocks.get(&then_block.to_idx()).unwrap();
+                let if_block_value = *ctx.blocks.get(&if_block.to_idx()).unwrap();
+                let then_block_value = *ctx.blocks.get(&then_block.to_idx()).unwrap();
 
-                core::LLVMBuildCondBr(ctx.builder, cond, if_block, then_block);
+                core::LLVMBuildCondBr(ctx.builder, cond, if_block_value, then_block_value);
+
+                lower_block(ctx, if_block, false);
+                lower_block(ctx, then_block, false);
             }
         }
+    }
+}
+
+// note: this moves the builder to the end of the added block
+fn add_block(ctx: &mut FnCtx, block_idx: BlockIdx, name: Option<String>) -> LLVMBasicBlockRef {
+    unsafe {
+        let block_name = CString::new(if block_idx.to_idx() == 0 {
+            "entry".to_string()
+        } else if let Some(name) = name {
+            format!("bb{}", name)
+        } else {
+            format!("bb{}", block_idx.to_idx())
+        })
+        .unwrap();
+        let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
+        ctx.blocks.insert(block_idx.to_idx(), block_ptr);
+        core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
+
+        let preds = ctx.func.find_preds_for(block_idx);
+        let mut block_args = Vec::new();
+
+        if !preds.is_empty() {
+            let operand_len = preds.first().unwrap().1.len();
+
+            for i in 0..(operand_len) {
+                let phy_ty = lower_type(ctx.ctx, preds.first().unwrap().1[i].get_type());
+                let phi_node = core::LLVMBuildPhi(ctx.builder, phy_ty, c"".as_ptr());
+                let mut blocks = Vec::new();
+                let mut values = Vec::new();
+                for (pred_block_idx, operands) in &preds {
+                    let value = lower_operand(ctx, &operands[i]);
+                    let pred_ptr = ctx.blocks.get(&pred_block_idx.to_idx()).unwrap();
+
+                    blocks.push(*pred_ptr);
+                    values.push(value);
+                }
+
+                assert_eq!(values.len(), values.len());
+
+                core::LLVMAddIncoming(
+                    phi_node,
+                    values.as_mut_ptr().cast(),
+                    blocks.as_mut_ptr().cast(),
+                    blocks.len() as u32,
+                );
+                block_args.push(phi_node);
+            }
+        }
+
+        ctx.block_args.insert(block_idx.to_idx(), block_args);
+        block_ptr
     }
 }
 
@@ -270,10 +320,10 @@ fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
                 let ty_ptr = lower_type(ctx.ctx, ty);
                 match const_value {
                     irvm::value::ConstValue::Bool(value) => {
-                        core::LLVMConstInt(ty_ptr, *value as u64, 0 as i32)
+                        core::LLVMConstInt(ty_ptr, *value as u64, 0_i32)
                     }
                     irvm::value::ConstValue::Int(value) => {
-                        core::LLVMConstInt(ty_ptr, *value, 0 as i32)
+                        core::LLVMConstInt(ty_ptr, *value, 0_i32)
                     }
                     irvm::value::ConstValue::Float(value) => core::LLVMConstReal(ty_ptr, *value),
                     irvm::value::ConstValue::Array(const_values) => todo!(),
