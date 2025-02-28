@@ -1,4 +1,4 @@
-use typed_generational_arena::{StandardIndex, StandardSlab, StandardSlabIndex};
+use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
 use crate::{
     block::{Block, BlockIdx, Terminator},

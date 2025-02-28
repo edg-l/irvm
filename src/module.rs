@@ -40,10 +40,6 @@ impl Module {
         &self.functions[id]
     }
 
-    pub fn func(&mut self, id: FnIdx) -> &mut Function {
-        &mut self.functions[id]
-    }
-
     pub fn get_function_mut(&mut self, id: FnIdx) -> &mut Function {
         &mut self.functions[id]
     }
