@@ -2,7 +2,7 @@ use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
 use crate::{
     block::{Block, BlockIdx, Terminator},
-    common::{CConv, DllStorageClass, Linkage, Visibility},
+    common::{CConv, DllStorageClass, Linkage, Location, Visibility},
     error::Error,
     types::Type,
     value::Operand,
@@ -23,6 +23,7 @@ pub struct Function {
     pub result_type: Type,
     pub parameters: Vec<Parameter>,
     pub align: Option<u32>,
+    pub location: Location,
 }
 
 #[derive(Debug, Clone)]
@@ -48,11 +49,12 @@ pub struct Parameter {
     pub readonly: bool,
     pub writeonly: bool,
     pub deferenceable: Option<u32>,
+    pub location: Location,
     // todo:  more attributes
 }
 
 impl Parameter {
-    pub fn new(ty: Type) -> Self {
+    pub fn new(ty: Type, location: Location) -> Self {
         Self {
             ty,
             zeroext: false,
@@ -75,12 +77,13 @@ impl Parameter {
             readonly: false,
             writeonly: false,
             deferenceable: None,
+            location
         }
     }
 }
 
 impl Function {
-    pub(crate) fn new(name: &str, params: &[Parameter], ret_ty: Type) -> Self {
+    pub(crate) fn new(name: &str, params: &[Parameter], ret_ty: Type, location: Location) -> Self {
         let mut blocks = StandardSlab::new();
         let entry_block = blocks.insert(Block::new(&[]));
         blocks[entry_block].id = Some(entry_block);
@@ -96,6 +99,7 @@ impl Function {
             result_type: ret_ty,
             parameters: params.to_vec(),
             align: None,
+            location
         }
     }
 
@@ -128,7 +132,7 @@ impl Function {
         for (i, b) in self.blocks.iter() {
             match &b.terminator {
                 Terminator::Ret(_) => {}
-                Terminator::Br { block, arguments } => {
+                Terminator::Br { block, arguments, .. } => {
                     if block == &target_block {
                         preds.push((i, arguments.clone()))
                     }

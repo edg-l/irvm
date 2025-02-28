@@ -2,12 +2,14 @@ use std::{
     collections::HashMap,
     error::Error,
     ffi::{CStr, CString},
+    path::Path,
     ptr::null_mut,
     rc::Rc,
 };
 
 use irvm::{
     block::{BlockIdx, Instruction},
+    common::Location,
     function::Function,
     module::Module,
     types::Type,
@@ -17,7 +19,11 @@ use irvm::{
 use itertools::Itertools;
 use llvm_sys::{
     LLVMIntPredicate, LLVMRealPredicate, core,
-    prelude::{LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMTypeRef, LLVMValueRef},
+    debuginfo::{self, LLVMDWARFEmissionKind},
+    prelude::{
+        LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef, LLVMMetadataRef,
+        LLVMTypeRef, LLVMValueRef,
+    },
 };
 
 pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
@@ -32,7 +38,62 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
         core::LLVMSetTarget(llvm_module, triple_str.as_ptr());
 
         let mut functions: HashMap<_, _> = Default::default();
+        // let mut debug_functions: HashMap<_, _> = Default::default();
         let builder = core::LLVMCreateBuilderInContext(ctx);
+        let dibuilder = debuginfo::LLVMCreateDIBuilder(llvm_module);
+
+        let compile_unit_file = if let Some(file) = &module.file {
+            get_difile(dibuilder, file)
+        } else {
+            debuginfo::LLVMDIBuilderCreateFile(
+                dibuilder,
+                c"/dev/stdin".as_ptr(),
+                c"/dev/stdin".count_bytes(),
+                c"".as_ptr(),
+                0,
+            )
+        };
+
+        let producer = c"IRVM version 0.1.0";
+        let flags = c"";
+        let splitname = c"";
+        let sysroot = c"";
+        let sdk = c"";
+
+        let compile_unit = debuginfo::LLVMDIBuilderCreateCompileUnit(
+            dibuilder,
+            debuginfo::LLVMDWARFSourceLanguage::LLVMDWARFSourceLanguageC17,
+            compile_unit_file,
+            producer.as_ptr(),
+            producer.count_bytes(),
+            0,
+            flags.as_ptr(),
+            flags.count_bytes(),
+            0,
+            splitname.as_ptr(),
+            splitname.count_bytes(),
+            LLVMDWARFEmissionKind::LLVMDWARFEmissionKindFull,
+            0,
+            0,
+            0,
+            sysroot.as_ptr(),
+            sysroot.count_bytes(),
+            sdk.as_ptr(),
+            sdk.count_bytes(),
+        );
+
+        let debug_module = debuginfo::LLVMDIBuilderCreateModule(
+            dibuilder,
+            compile_unit,
+            module_name.as_ptr(),
+            module.name.len(),
+            c"".as_ptr(),
+            0,
+            c"".as_ptr(),
+            0,
+            c"".as_ptr(),
+            0,
+        );
 
         for (fun_idx, func) in module.functions.iter() {
             let name = CString::new(func.name.as_str()).unwrap();
@@ -46,6 +107,46 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
             let fn_ty = core::LLVMFunctionType(ret_ty, params.as_mut_ptr(), params.len() as u32, 0);
             let fn_ptr = core::LLVMAddFunction(llvm_module, name.as_ptr(), fn_ty);
             functions.insert(fun_idx.to_idx(), (fn_ptr, fn_ty));
+
+            let mut file = compile_unit_file;
+
+            let mut line = 0;
+            let mut col = 0;
+            match &func.location {
+                Location::Unknown => {}
+                Location::File(file_location) => {
+                    file = get_difile(dibuilder, &file_location.file);
+                    line = file_location.line;
+                    col = file_location.col;
+                }
+            }
+
+            /*
+            let debug_func_ty = debuginfo::LLVMDIBuilderCreateSubroutineType(
+                dibuilder,
+                file,
+                ParameterTypes,
+                NumParameterTypes,
+                Flags,
+            );
+
+            debuginfo::LLVMDIBuilderCreateFunction(
+                dibuilder,
+                debug_module,
+                name.as_ptr(),
+                name.count_bytes(),
+                name.as_ptr(),
+                name.count_bytes(),
+                file,
+                line,
+                Ty,
+                IsLocalToUnit,
+                IsDefinition,
+                ScopeLine,
+                Flags,
+                IsOptimized,
+            );
+             */
         }
 
         let functions = Rc::new(functions);
@@ -58,10 +159,12 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
                 fn_ptr,
                 func: func.clone(),
                 builder,
+                dibuilder,
                 blocks: Default::default(),
                 values: Default::default(),
                 block_args: Default::default(),
                 functions: Rc::clone(&functions),
+                debug_scope: debug_module, // todo: change to disubprogram
             };
 
             for (id, _) in func.blocks.iter() {
@@ -99,6 +202,8 @@ struct FnCtx {
     fn_ptr: LLVMValueRef,
     func: Function,
     builder: LLVMBuilderRef,
+    dibuilder: LLVMDIBuilderRef,
+    debug_scope: LLVMMetadataRef,
     functions: Rc<HashMap<usize, (LLVMValueRef, LLVMTypeRef)>>,
     blocks: HashMap<usize, LLVMBasicBlockRef>,
     // block, inst
@@ -114,7 +219,9 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
         core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
         add_preds(ctx, block_idx);
 
-        for (inst_idx, inst) in ctx.func.blocks[block_idx].instructions.iter() {
+        for (inst_idx, (loc, inst)) in ctx.func.blocks[block_idx].instructions.iter() {
+            set_loc(ctx.ctx, ctx.builder, loc, ctx.debug_scope);
+
             match inst {
                 Instruction::BinaryOp(binary_op) => match binary_op {
                     irvm::block::BinaryOp::Add { lhs, rhs, nsw, nuw } => {
@@ -443,7 +550,8 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
 
         match ctx.func.blocks[block_idx].terminator.clone() {
             irvm::block::Terminator::Ret(op) => {
-                if let Some(op) = op {
+                set_loc(ctx.ctx, ctx.builder, &op.0, ctx.debug_scope);
+                if let Some(op) = op.1 {
                     let value = lower_operand(ctx, &op);
                     core::LLVMBuildRet(ctx.builder, value);
                 } else {
@@ -451,8 +559,11 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                 }
             }
             irvm::block::Terminator::Br {
-                block: jmp_block, ..
+                block: jmp_block,
+                location,
+                ..
             } => {
+                set_loc(ctx.ctx, ctx.builder, &location, ctx.debug_scope);
                 let target_block = *ctx.blocks.get(&jmp_block.to_idx()).unwrap();
 
                 core::LLVMBuildBr(ctx.builder, target_block);
@@ -487,6 +598,47 @@ fn add_block(ctx: &mut FnCtx, block_idx: BlockIdx, name: Option<String>) -> LLVM
         let block_ptr = core::LLVMAppendBasicBlock(ctx.fn_ptr, block_name.as_ptr());
         ctx.blocks.insert(block_idx.to_idx(), block_ptr);
         block_ptr
+    }
+}
+
+fn get_difile(dibuilder: LLVMDIBuilderRef, file: &Path) -> LLVMMetadataRef {
+    let parent = if let Some(parent) = file.parent() {
+        CString::new(parent.display().to_string()).unwrap()
+    } else {
+        CString::new("").unwrap()
+    };
+
+    let filename = CString::new(file.display().to_string()).unwrap();
+
+    unsafe {
+        debuginfo::LLVMDIBuilderCreateFile(
+            dibuilder,
+            filename.as_ptr(),
+            filename.count_bytes(),
+            parent.as_ptr(),
+            parent.count_bytes(),
+        )
+    }
+}
+
+fn set_loc(
+    ctx: LLVMContextRef,
+    builder: LLVMBuilderRef,
+    location: &Location,
+    scope: LLVMMetadataRef,
+) {
+    match location {
+        Location::Unknown => {}
+        Location::File(file_location) => unsafe {
+            let loc = debuginfo::LLVMDIBuilderCreateDebugLocation(
+                ctx,
+                file_location.line,
+                file_location.col,
+                scope,
+                null_mut(),
+            );
+            core::LLVMSetCurrentDebugLocation2(builder, loc);
+        },
     }
 }
 
