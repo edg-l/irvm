@@ -22,7 +22,10 @@ pub enum Type {
     Fp128,
     X86Fp80,
     PpcFp128,
-    Ptr(Option<u32>),
+    Ptr {
+        pointee: TypeIdx,
+        address_space: Option<u32>,
+    },
     Vector(VectorType),
     Array(ArrayType),
     Struct(Arc<StructType>),
@@ -59,7 +62,6 @@ pub struct TypeStorage {
     pub(crate) types: StandardSlab<TypeInfo>,
     pub(crate) i1_ty: Option<TypeIdx>,
     pub(crate) i64_ty: Option<TypeIdx>,
-    pub(crate) ptr_ty: Option<TypeIdx>,
 }
 
 impl TypeStorage {
@@ -68,16 +70,11 @@ impl TypeStorage {
             types: StandardSlab::new(),
             i1_ty: None,
             i64_ty: None,
-            ptr_ty: None,
         }
     }
 
     pub fn i1_ty(&self) -> Option<TypeIdx> {
         self.i1_ty
-    }
-
-    pub fn ptr_ty(&self) -> Option<TypeIdx> {
-        self.ptr_ty
     }
 
     pub fn i64_ty(&self) -> Option<TypeIdx> {
@@ -97,10 +94,6 @@ impl TypeStorage {
 
         if let Type::Int(64) = ty {
             self.i64_ty = Some(id);
-        }
-
-        if let Type::Ptr(None) = ty {
-            self.ptr_ty = Some(id);
         }
 
         id

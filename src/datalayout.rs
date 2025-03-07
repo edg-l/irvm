@@ -447,7 +447,10 @@ impl DataLayout {
             Type::Fp128 => 128,
             Type::X86Fp80 => 80,
             Type::PpcFp128 => 128,
-            Type::Ptr(addr_space) => {
+            Type::Ptr {
+                address_space: addr_space,
+                ..
+            } => {
                 let mut found_value = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Pointer {
@@ -657,7 +660,10 @@ impl DataLayout {
 
                 closest_found_abi.unwrap()
             }
-            Type::Ptr(addr_space) => {
+            Type::Ptr {
+                address_space: addr_space,
+                ..
+            } => {
                 let mut found_value = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Pointer {
@@ -850,7 +856,10 @@ impl DataLayout {
 
                 closest_found_abi.unwrap()
             }
-            Type::Ptr(addr_space) => {
+            Type::Ptr {
+                address_space: addr_space,
+                ..
+            } => {
                 let mut found_value = None;
                 for found in &self.type_infos {
                     if let TypeLayout::Pointer {
@@ -1091,7 +1100,14 @@ mod test {
         assert_eq!(datalayout.get_type_size(&Type::PpcFp128), 128);
          */
 
-        let ptr_ty = storage.add_type(Type::Ptr(None), Location::Unknown, None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            Location::Unknown,
+            None,
+        );
 
         assert_eq!(datalayout.get_type_size(&storage, ptr_ty), 64);
         // assert_eq!(datalayout.get_type_size(&Type::Ptr(Some(2))), 64);

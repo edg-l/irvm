@@ -17,7 +17,7 @@ impl DebugNameProvider for DefaultDebugNameProvider {
             Type::Fp128 => todo!(),
             Type::X86Fp80 => todo!(),
             Type::PpcFp128 => todo!(),
-            Type::Ptr(_) => todo!(),
+            Type::Ptr { .. } => todo!(),
             Type::Vector(_vector_type) => todo!(),
             Type::Array(_array_type) => todo!(),
             Type::Struct(_struct_type) => todo!(),

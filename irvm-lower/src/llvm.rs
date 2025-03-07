@@ -10,6 +10,7 @@ use std::{
 use irvm::{
     block::{BlockIdx, Instruction},
     common::Location,
+    datalayout::DataLayout,
     function::Function,
     module::{Module, TypeIdx},
     types::{Type, TypeStorage},
@@ -18,8 +19,8 @@ use irvm::{
 
 use itertools::Itertools;
 use llvm_sys::{
-    LLVMIntPredicate, LLVMRealPredicate, core,
-    debuginfo::{self, LLVMDWARFEmissionKind},
+    LLVMIntPredicate, LLVMOpaqueMetadata, LLVMRealPredicate, core,
+    debuginfo::{self, LLVMDIFlagPublic, LLVMDWARFEmissionKind},
     prelude::{
         LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef, LLVMMetadataRef,
         LLVMTypeRef, LLVMValueRef,
@@ -41,6 +42,7 @@ pub fn lower_module_to_llvmir(
         core::LLVMSetTarget(llvm_module, triple_str.as_ptr());
 
         let mut functions: HashMap<_, _> = Default::default();
+        let mut dfunctions: HashMap<_, _> = Default::default();
         // let mut debug_functions: HashMap<_, _> = Default::default();
         let builder = core::LLVMCreateBuilderInContext(ctx);
         let dibuilder = debuginfo::LLVMCreateDIBuilder(llvm_module);
@@ -124,16 +126,30 @@ pub fn lower_module_to_llvmir(
                 }
             }
 
-            /*
+            let mut debug_param_types = Vec::new();
+
+            for param in func.parameters.iter() {
+                let ptr = lower_debug_type(ctx, &module.data_layout, dibuilder, storage, param.ty);
+                debug_param_types.push(ptr);
+            }
+
             let debug_func_ty = debuginfo::LLVMDIBuilderCreateSubroutineType(
                 dibuilder,
                 file,
-                ParameterTypes,
-                NumParameterTypes,
-                Flags,
+                debug_param_types.as_mut_ptr(),
+                debug_param_types.len() as u32,
+                0,
             );
 
-            debuginfo::LLVMDIBuilderCreateFunction(
+            let ret_debug_ty = lower_debug_type(
+                ctx,
+                &module.data_layout,
+                dibuilder,
+                storage,
+                func.result_type,
+            );
+
+            let di_func = debuginfo::LLVMDIBuilderCreateFunction(
                 dibuilder,
                 debug_module,
                 name.as_ptr(),
@@ -142,20 +158,22 @@ pub fn lower_module_to_llvmir(
                 name.count_bytes(),
                 file,
                 line,
-                Ty,
-                IsLocalToUnit,
-                IsDefinition,
-                ScopeLine,
-                Flags,
-                IsOptimized,
+                debug_func_ty,
+                0,
+                1,
+                line,
+                0,
+                0,
             );
-             */
+            dfunctions.insert(fun_idx.to_idx(), di_func);
+            debuginfo::LLVMSetSubprogram(fn_ptr, di_func);
         }
 
         let functions = Rc::new(functions);
 
         for (fun_idx, func) in module.functions.iter() {
             let fn_ptr = functions.get(&fun_idx.to_idx()).unwrap().0;
+            let dfunc = *dfunctions.get(&fun_idx.to_idx()).unwrap();
 
             let mut fn_ctx = FnCtx {
                 ctx,
@@ -163,12 +181,13 @@ pub fn lower_module_to_llvmir(
                 func: func.clone(),
                 builder,
                 dibuilder,
+                dfunc,
                 storage,
                 blocks: Default::default(),
                 values: Default::default(),
                 block_args: Default::default(),
                 functions: Rc::clone(&functions),
-                debug_scope: debug_module, // todo: change to disubprogram
+                debug_scope: dfunc,
             };
 
             for (id, _) in func.blocks.iter() {
@@ -178,6 +197,8 @@ pub fn lower_module_to_llvmir(
             for (id, _) in func.blocks.iter() {
                 lower_block(&mut fn_ctx, id);
             }
+
+            debuginfo::LLVMDIBuilderFinalizeSubprogram(dibuilder, dfunc);
         }
 
         core::LLVMDumpModule(llvm_module);
@@ -208,6 +229,7 @@ struct FnCtx<'m> {
     storage: &'m TypeStorage,
     builder: LLVMBuilderRef,
     dibuilder: LLVMDIBuilderRef,
+    dfunc: *mut LLVMOpaqueMetadata,
     debug_scope: LLVMMetadataRef,
     functions: Rc<HashMap<usize, (LLVMValueRef, LLVMTypeRef)>>,
     blocks: HashMap<usize, LLVMBasicBlockRef>,
@@ -634,7 +656,10 @@ fn set_loc(
     scope: LLVMMetadataRef,
 ) {
     match location {
-        Location::Unknown => {}
+        Location::Unknown => unsafe {
+            let loc = debuginfo::LLVMDIBuilderCreateDebugLocation(ctx, 0, 0, scope, null_mut());
+            core::LLVMSetCurrentDebugLocation2(builder, loc);
+        },
         Location::File(file_location) => unsafe {
             let loc = debuginfo::LLVMDIBuilderCreateDebugLocation(
                 ctx,
@@ -708,6 +733,7 @@ fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
 fn lower_constant(ctx: &FnCtx, value: &ConstValue, ty: TypeIdx) -> LLVMValueRef {
     unsafe {
         let ty_ptr = lower_type(ctx.ctx, ctx.storage, ty);
+
         match value {
             irvm::value::ConstValue::Int(value) => core::LLVMConstInt(ty_ptr, *value, 0_i32),
             irvm::value::ConstValue::Float(value) => core::LLVMConstReal(ty_ptr, *value),
@@ -780,9 +806,10 @@ fn lower_type(ctx: LLVMContextRef, storage: &TypeStorage, ty: TypeIdx) -> LLVMTy
             Type::Fp128 => core::LLVMFP128TypeInContext(ctx),
             Type::X86Fp80 => core::LLVMX86FP80TypeInContext(ctx),
             Type::PpcFp128 => core::LLVMPPCFP128TypeInContext(ctx),
-            Type::Ptr(address_space) => {
-                core::LLVMPointerTypeInContext(ctx, address_space.unwrap_or(0))
-            }
+            Type::Ptr {
+                pointee: _,
+                address_space,
+            } => core::LLVMPointerTypeInContext(ctx, address_space.unwrap_or(0)),
             Type::Vector(vector_type) => {
                 let inner = lower_type(ctx, storage, vector_type.ty);
                 core::LLVMVectorType(inner, vector_type.size)
@@ -819,6 +846,79 @@ fn lower_type(ctx: LLVMContextRef, storage: &TypeStorage, ty: TypeIdx) -> LLVMTy
                     )
                 }
             }
+        }
+    }
+}
+
+fn lower_debug_type(
+    ctx: LLVMContextRef,
+    datalayout: &DataLayout,
+    builder: LLVMDIBuilderRef,
+    storage: &TypeStorage,
+    type_idx: TypeIdx,
+) -> LLVMMetadataRef {
+    let ty = storage.get_type_info(type_idx);
+
+    let name = CString::new(ty.debug_name.clone().unwrap_or_default()).unwrap();
+
+    // 1 == address
+    // 2 = boolean
+    // 4 = float
+    // 5 = signed
+    // 11 = numeric string
+    // https://dwarfstd.org/doc/DWARF5.pdf#section.7.8
+
+    let size_in_bits = datalayout.get_type_size(storage, type_idx);
+    let align_in_bits = datalayout.get_type_align(storage, type_idx);
+
+    unsafe {
+        match &ty.ty {
+            Type::Int(width) => {
+                let mut encoding = 0x7;
+                if *width == 1 {
+                    encoding = 0x2;
+                }
+                debuginfo::LLVMDIBuilderCreateBasicType(
+                    builder,
+                    name.as_ptr(),
+                    name.count_bytes(),
+                    size_in_bits as u64,
+                    encoding,
+                    LLVMDIFlagPublic,
+                )
+            }
+            Type::Half
+            | Type::BFloat
+            | Type::Float
+            | Type::Double
+            | Type::Fp128
+            | Type::X86Fp80
+            | Type::PpcFp128 => debuginfo::LLVMDIBuilderCreateBasicType(
+                builder,
+                name.as_ptr(),
+                name.count_bytes(),
+                size_in_bits as u64,
+                0x4,
+                LLVMDIFlagPublic,
+            ),
+            Type::Ptr {
+                pointee,
+                address_space,
+            } => {
+                let pointee_ptr = lower_debug_type(ctx, datalayout, builder, storage, *pointee);
+                debuginfo::LLVMDIBuilderCreatePointerType(
+                    builder,
+                    pointee_ptr,
+                    size_in_bits as u64,
+                    align_in_bits,
+                    address_space.unwrap_or(0),
+                    name.as_ptr(),
+                    name.count_bytes(),
+                )
+            }
+            Type::Vector(vector_type) => todo!(),
+            Type::Array(array_type) => todo!(),
+            Type::Struct(struct_type) => todo!(),
         }
     }
 }

@@ -22,7 +22,14 @@ mod test {
         let bool_ty = storage.add_type(Type::Int(1), Location::Unknown, Some("bool"));
         let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, Some("i32"));
         let i64_ty = storage.add_type(Type::Int(64), Location::Unknown, Some("i64"));
-        let ptr_ty = storage.add_type(Type::Ptr(None), Location::Unknown, Some("ptr"));
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            Location::Unknown,
+            Some("*i32"),
+        );
 
         let main_func = module
             .add_function(

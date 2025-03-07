@@ -345,7 +345,7 @@ impl Block {
             .map(|x| Operand::BlockArgument {
                 block_idx: self.id.unwrap().to_idx(),
                 nth,
-                ty: x.clone(),
+                ty: *x,
             })
             .ok_or_else(|| Error::BlockArgNotFound {
                 block_id: self.id(),
@@ -583,16 +583,22 @@ impl Block {
 
     pub fn instr_alloca(
         &mut self,
-        alloca_ty: TypeIdx,
+        pointer_type_idx: TypeIdx,
         num_elements: u32,
         align: Option<u32>,
         location: Location,
         type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
+        let pointer_type = type_storage.get_type_info(pointer_type_idx);
+        let inner = if let Type::Ptr { pointee, .. } = pointer_type.ty {
+            pointee
+        } else {
+            panic!("invalid pointer type")
+        };
         let idx = self.instructions.insert((
             location,
             Instruction::MemoryOp(MemoryOp::Alloca {
-                ty: alloca_ty,
+                ty: inner,
                 num_elements,
                 inalloca: false,
                 align,
@@ -600,16 +606,12 @@ impl Block {
             }),
         ));
 
-        Ok(Operand::Value(
-            self.id(),
-            idx,
-            type_storage.ptr_ty.expect("ptr ty missing"),
-        ))
+        Ok(Operand::Value(self.id(), idx, pointer_type_idx))
     }
 
     pub fn instr_alloca_ex(
         &mut self,
-        alloca_ty: TypeIdx,
+        pointer_type_idx: TypeIdx,
         num_elements: u32,
         align: Option<u32>,
         inalloca: bool,
@@ -617,10 +619,17 @@ impl Block {
         location: Location,
         type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
+        let pointer_type = type_storage.get_type_info(pointer_type_idx);
+        let inner = if let Type::Ptr { pointee, .. } = pointer_type.ty {
+            pointee
+        } else {
+            panic!("invalid pointer type")
+        };
+
         let idx = self.instructions.insert((
             location,
             Instruction::MemoryOp(MemoryOp::Alloca {
-                ty: alloca_ty,
+                ty: inner,
                 num_elements,
                 inalloca,
                 align,
@@ -628,11 +637,7 @@ impl Block {
             }),
         ));
 
-        Ok(Operand::Value(
-            self.id(),
-            idx,
-            type_storage.ptr_ty.expect("ptr ty missing"),
-        ))
+        Ok(Operand::Value(self.id(), idx, pointer_type_idx))
     }
 
     pub fn instr_call(
