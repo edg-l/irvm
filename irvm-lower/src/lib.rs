@@ -5,7 +5,11 @@ mod test {
     use std::error::Error;
 
     use irvm::{
-        block::IcmpCond, common::Location, function::Parameter, module::Module, types::Type,
+        block::IcmpCond,
+        common::Location,
+        function::Parameter,
+        module::Module,
+        types::{Type, TypeStorage},
         value::Operand,
     };
 
@@ -14,25 +18,30 @@ mod test {
     #[test]
     fn test_function_llvm() -> Result<(), Box<dyn Error>> {
         let mut module = Module::new("example");
+        let mut storage = TypeStorage::new();
+        let bool_ty = storage.add_type(Type::Int(1), Location::Unknown, Some("bool"));
+        let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, Some("i32"));
+        let i64_ty = storage.add_type(Type::Int(64), Location::Unknown, Some("i64"));
+        let ptr_ty = storage.add_type(Type::Ptr(None), Location::Unknown, Some("ptr"));
 
         let main_func = module
             .add_function(
                 "main",
-                &[Parameter::new(Type::Int(32), Location::Unknown)],
-                Type::Int(32),
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                i32_ty,
                 Location::Unknown,
             )
             .get_id();
         let test_func = module
             .add_function(
                 "test",
-                &[Parameter::new(Type::Int(32), Location::Unknown)],
-                Type::Int(32),
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                i32_ty,
                 Location::Unknown,
             )
             .get_id();
 
-        let test_func_ret_ty = module.get_function(test_func).result_type.clone();
+        let test_func_ret_ty = module.get_function(test_func).result_type;
 
         // main function
         {
@@ -42,19 +51,20 @@ mod test {
 
             let value = func.blocks[entry_block].instr_add(
                 &param,
-                &Operand::const_i32(4),
+                &Operand::const_int(4, i32_ty),
                 Location::Unknown,
             )?;
 
             let then_block = func.add_block(&[]);
             let else_block = func.add_block(&[]);
-            let final_block = func.add_block(&[Type::Int(32)]);
+            let final_block = func.add_block(&[i32_ty]);
 
             let cond = func.blocks[entry_block].instr_icmp(
                 IcmpCond::Eq,
                 value.clone(),
-                Operand::const_i32(6),
+                Operand::const_int(6, i32_ty),
                 Location::Unknown,
+                &storage,
             )?;
 
             func.blocks[entry_block].instr_cond_jmp(
@@ -70,7 +80,7 @@ mod test {
             {
                 let value = func.blocks[then_block].instr_add(
                     &value,
-                    &Operand::const_i32(2),
+                    &Operand::const_int(2, i32_ty),
                     Location::Unknown,
                 )?;
                 func.blocks[then_block].instr_jmp(final_block, &[value], Location::Unknown);
@@ -80,7 +90,7 @@ mod test {
             {
                 let value = func.blocks[else_block].instr_add(
                     &value,
-                    &Operand::const_i32(6),
+                    &Operand::const_int(6, i32_ty),
                     Location::Unknown,
                 )?;
                 func.blocks[else_block].instr_jmp(final_block, &[value], Location::Unknown);
@@ -92,7 +102,7 @@ mod test {
                 let value = func.blocks[final_block].instr_call(
                     test_func,
                     &[param],
-                    &test_func_ret_ty,
+                    test_func_ret_ty,
                     Location::Unknown,
                 )?;
                 func.blocks[final_block].instr_ret(Some(&value), Location::Unknown);
@@ -107,7 +117,7 @@ mod test {
                 .instr_ret(Some(&value), Location::Unknown);
         }
 
-        lower_module_to_llvmir(&module)?;
+        lower_module_to_llvmir(&module, &storage)?;
 
         Ok(())
     }

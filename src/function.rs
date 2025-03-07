@@ -4,6 +4,7 @@ use crate::{
     block::{Block, BlockIdx, Terminator},
     common::{CConv, DllStorageClass, Linkage, Location, Visibility},
     error::Error,
+    module::TypeIdx,
     types::Type,
     value::Operand,
 };
@@ -20,7 +21,7 @@ pub struct Function {
     pub dll_storage: Option<DllStorageClass>,
     pub blocks: StandardSlab<Block>,
     pub entry_block: BlockIdx,
-    pub result_type: Type,
+    pub result_type: TypeIdx,
     pub parameters: Vec<Parameter>,
     pub align: Option<u32>,
     pub location: Location,
@@ -28,7 +29,7 @@ pub struct Function {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    pub ty: Type,
+    pub ty: TypeIdx,
     pub zeroext: bool,
     pub signext: bool,
     pub noext: bool,
@@ -37,7 +38,7 @@ pub struct Parameter {
     pub byref: Option<Type>,
     pub preallocated: Option<Type>,
     pub inalloca: Option<Type>,
-    pub sret: Option<Type>,
+    pub sret: Option<TypeIdx>,
     pub element_type: Option<Type>,
     pub align: Option<u32>,
     pub noalias: bool,
@@ -54,7 +55,7 @@ pub struct Parameter {
 }
 
 impl Parameter {
-    pub fn new(ty: Type, location: Location) -> Self {
+    pub fn new(ty: TypeIdx, location: Location) -> Self {
         Self {
             ty,
             zeroext: false,
@@ -77,13 +78,18 @@ impl Parameter {
             readonly: false,
             writeonly: false,
             deferenceable: None,
-            location
+            location,
         }
     }
 }
 
 impl Function {
-    pub(crate) fn new(name: &str, params: &[Parameter], ret_ty: Type, location: Location) -> Self {
+    pub(crate) fn new(
+        name: &str,
+        params: &[Parameter],
+        ret_ty: TypeIdx,
+        location: Location,
+    ) -> Self {
         let mut blocks = StandardSlab::new();
         let entry_block = blocks.insert(Block::new(&[]));
         blocks[entry_block].id = Some(entry_block);
@@ -99,7 +105,7 @@ impl Function {
             result_type: ret_ty,
             parameters: params.to_vec(),
             align: None,
-            location
+            location,
         }
     }
 
@@ -110,7 +116,7 @@ impl Function {
     pub fn param(&self, nth: usize) -> Result<Operand, Error> {
         self.parameters
             .get(nth)
-            .map(|x| Operand::Parameter(nth, x.ty.clone()))
+            .map(|x| Operand::Parameter(nth, x.ty))
             .ok_or_else(|| Error::FunctionParamNotFound {
                 name: self.name.clone(),
                 nth,
@@ -121,7 +127,7 @@ impl Function {
         &mut self.blocks[self.entry_block]
     }
 
-    pub fn add_block(&mut self, arguments: &[Type]) -> BlockIdx {
+    pub fn add_block(&mut self, arguments: &[TypeIdx]) -> BlockIdx {
         let id = self.blocks.insert(Block::new(arguments));
         self.blocks[id].id = Some(id);
         id
@@ -132,7 +138,9 @@ impl Function {
         for (i, b) in self.blocks.iter() {
             match &b.terminator {
                 Terminator::Ret(_) => {}
-                Terminator::Br { block, arguments, .. } => {
+                Terminator::Br {
+                    block, arguments, ..
+                } => {
                     if block == &target_block {
                         preds.push((i, arguments.clone()))
                     }

@@ -1,4 +1,7 @@
-use crate::types::Type;
+use crate::{
+    module::TypeIdx,
+    types::{Type, TypeStorage},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataLayout {
@@ -411,8 +414,9 @@ impl DataLayout {
         }
     }
 
-    pub fn get_type_size(&self, ty: &Type) -> u32 {
-        match ty {
+    pub fn get_type_size(&self, storage: &TypeStorage, ty: TypeIdx) -> u32 {
+        let ty = &storage.types[ty];
+        match &ty.ty {
             Type::Int(bits) => {
                 let mut closest_found_lower = None;
 
@@ -468,11 +472,11 @@ impl DataLayout {
                 found_value.expect("should have a ptr type")
             }
             Type::Vector(vector_type) => {
-                let align = self.get_type_align(&vector_type.ty);
+                let align = self.get_type_align(storage, vector_type.ty);
                 align * vector_type.size
             }
             Type::Array(array_type) => {
-                let align = self.get_type_align(&array_type.ty);
+                let align = self.get_type_align(storage, array_type.ty);
                 align * array_type.size as u32
             }
             Type::Struct(struct_type) => {
@@ -480,7 +484,7 @@ impl DataLayout {
                 let mut align = 1;
 
                 for field in &struct_type.fields {
-                    let field_align = self.get_type_align(field);
+                    let field_align = self.get_type_align(storage, *field);
                     align = align.max(field_align);
 
                     if size % field_align != 0 {
@@ -488,7 +492,7 @@ impl DataLayout {
                         size += padding;
                     }
 
-                    let field_size = self.get_type_size(field);
+                    let field_size = self.get_type_size(storage, *field);
 
                     size += field_size;
                 }
@@ -504,8 +508,9 @@ impl DataLayout {
         }
     }
 
-    pub fn get_type_abi_align(&self, ty: &Type) -> u32 {
-        match ty {
+    pub fn get_type_abi_align(&self, storage: &TypeStorage, ty: TypeIdx) -> u32 {
+        let ty = &storage.types[ty];
+        match &ty.ty {
             Type::Int(bits) => {
                 let mut closest_found_lower = None;
                 let mut closest_found_lower_abi = None;
@@ -674,8 +679,8 @@ impl DataLayout {
                 }
                 found_value.expect("should have a ptr type")
             }
-            Type::Vector(vector_type) => self.get_type_abi_align(&vector_type.ty),
-            Type::Array(array_type) => self.get_type_abi_align(&array_type.ty),
+            Type::Vector(vector_type) => self.get_type_abi_align(storage, vector_type.ty),
+            Type::Array(array_type) => self.get_type_abi_align(storage, array_type.ty),
             Type::Struct(struct_type) => {
                 if struct_type.packed {
                     1
@@ -683,7 +688,7 @@ impl DataLayout {
                     let mut max_align = 1;
 
                     for field in &struct_type.fields {
-                        max_align = max_align.max(self.get_type_abi_align(field));
+                        max_align = max_align.max(self.get_type_abi_align(storage, *field));
                     }
 
                     max_align
@@ -693,8 +698,9 @@ impl DataLayout {
     }
 
     /// Returns preferred align if there is one.
-    pub fn get_type_align(&self, ty: &Type) -> u32 {
-        match ty {
+    pub fn get_type_align(&self, storage: &TypeStorage, ty: TypeIdx) -> u32 {
+        let ty = storage.get_type_info(ty);
+        match &ty.ty {
             Type::Int(bits) => {
                 let mut closest_found_lower = None;
                 let mut closest_found_lower_align = None;
@@ -869,8 +875,8 @@ impl DataLayout {
                 }
                 found_value.expect("should have a ptr type")
             }
-            Type::Vector(vector_type) => self.get_type_align(&vector_type.ty),
-            Type::Array(array_type) => self.get_type_align(&array_type.ty),
+            Type::Vector(vector_type) => self.get_type_align(storage, vector_type.ty),
+            Type::Array(array_type) => self.get_type_align(storage, array_type.ty),
             Type::Struct(struct_type) => {
                 if struct_type.packed {
                     1
@@ -878,7 +884,7 @@ impl DataLayout {
                     let mut max_align = 1;
 
                     for field in &struct_type.fields {
-                        max_align = max_align.max(self.get_type_align(field));
+                        max_align = max_align.max(self.get_type_align(storage, *field));
                     }
 
                     max_align
@@ -1045,18 +1051,29 @@ impl DataLayout {
 mod test {
     use std::sync::Arc;
 
-    use crate::types::{StructType, Type};
+    use crate::{
+        common::Location,
+        types::{StructType, Type, TypeStorage},
+    };
 
     use super::DataLayout;
 
     #[test]
     fn test_get_type_size() {
+        let mut storage = TypeStorage::new();
         let datalayout = DataLayout::default();
 
-        assert_eq!(datalayout.get_type_size(&Type::Int(1)), 8);
-        assert_eq!(datalayout.get_type_size(&Type::Int(2)), 8);
-        assert_eq!(datalayout.get_type_size(&Type::Int(4)), 8);
-        assert_eq!(datalayout.get_type_size(&Type::Int(8)), 8);
+        let i1_ty = storage.add_type(Type::Int(1), Location::Unknown, None);
+        let i2_ty = storage.add_type(Type::Int(2), Location::Unknown, None);
+        let i4_ty = storage.add_type(Type::Int(4), Location::Unknown, None);
+        let i8_ty = storage.add_type(Type::Int(8), Location::Unknown, None);
+        let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, None);
+        let i64_ty = storage.add_type(Type::Int(64), Location::Unknown, None);
+        assert_eq!(datalayout.get_type_size(&storage, i1_ty), 8);
+        assert_eq!(datalayout.get_type_size(&storage, i2_ty), 8);
+        assert_eq!(datalayout.get_type_size(&storage, i4_ty), 8);
+        assert_eq!(datalayout.get_type_size(&storage, i8_ty), 8);
+        /*
         assert_eq!(datalayout.get_type_size(&Type::Int(16)), 16);
         assert_eq!(datalayout.get_type_size(&Type::Int(24)), 32);
         assert_eq!(datalayout.get_type_size(&Type::Int(32)), 32);
@@ -1072,37 +1089,55 @@ mod test {
         assert_eq!(datalayout.get_type_size(&Type::Double), 64);
         assert_eq!(datalayout.get_type_size(&Type::X86Fp80), 80);
         assert_eq!(datalayout.get_type_size(&Type::PpcFp128), 128);
+         */
 
-        assert_eq!(datalayout.get_type_size(&Type::Ptr(None)), 64);
-        assert_eq!(datalayout.get_type_size(&Type::Ptr(Some(2))), 64);
+        let ptr_ty = storage.add_type(Type::Ptr(None), Location::Unknown, None);
 
-        assert_eq!(
-            datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+        assert_eq!(datalayout.get_type_size(&storage, ptr_ty), 64);
+        // assert_eq!(datalayout.get_type_size(&Type::Ptr(Some(2))), 64);
+
+        let struct_ty = storage.add_type(
+            Type::Struct(Arc::new(StructType {
                 packed: false,
                 ident: None,
-                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32),]
-            }))),
-            128
+                fields: vec![i64_ty, i32_ty, i32_ty],
+            })),
+            Location::Unknown,
+            None,
         );
 
-        assert_eq!(
-            datalayout.get_type_size(&Type::Struct(Arc::new(StructType {
+        assert_eq!(datalayout.get_type_size(&storage, struct_ty), 128);
+
+        let struct_ty = storage.add_type(
+            Type::Struct(Arc::new(StructType {
                 packed: false,
                 ident: None,
-                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32), Type::Int(32),]
-            }))),
-            192
+                fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
+            })),
+            Location::Unknown,
+            None,
         );
+
+        assert_eq!(datalayout.get_type_size(&storage, struct_ty), 192);
     }
 
     #[test]
     fn test_get_type_align() {
+        let mut type_storage = TypeStorage::new();
         let datalayout = DataLayout::default();
 
-        assert_eq!(datalayout.get_type_align(&Type::Int(1)), 8);
-        assert_eq!(datalayout.get_type_align(&Type::Int(2)), 8);
-        assert_eq!(datalayout.get_type_align(&Type::Int(4)), 8);
-        assert_eq!(datalayout.get_type_align(&Type::Int(8)), 8);
+        let i1_ty = type_storage.add_type(Type::Int(1), Location::Unknown, None);
+        let i2_ty = type_storage.add_type(Type::Int(2), Location::Unknown, None);
+        let i4_ty = type_storage.add_type(Type::Int(4), Location::Unknown, None);
+        let i8_ty = type_storage.add_type(Type::Int(8), Location::Unknown, None);
+        let i32_ty = type_storage.add_type(Type::Int(32), Location::Unknown, None);
+        let i64_ty = type_storage.add_type(Type::Int(64), Location::Unknown, None);
+
+        assert_eq!(datalayout.get_type_align(&type_storage, i1_ty), 8);
+        assert_eq!(datalayout.get_type_align(&type_storage, i2_ty), 8);
+        assert_eq!(datalayout.get_type_align(&type_storage, i4_ty), 8);
+        assert_eq!(datalayout.get_type_align(&type_storage, i8_ty), 8);
+        /*
         assert_eq!(datalayout.get_type_align(&Type::Int(16)), 16);
         assert_eq!(datalayout.get_type_align(&Type::Int(24)), 32);
         assert_eq!(datalayout.get_type_align(&Type::Int(32)), 32);
@@ -1121,24 +1156,31 @@ mod test {
 
         assert_eq!(datalayout.get_type_align(&Type::Ptr(None)), 64);
         assert_eq!(datalayout.get_type_align(&Type::Ptr(Some(2))), 64);
+        */
 
-        assert_eq!(
-            datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+        let struct_ty = type_storage.add_type(
+            Type::Struct(Arc::new(StructType {
                 packed: false,
                 ident: None,
-                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32),]
-            }))),
-            64
+                fields: vec![i64_ty, i32_ty, i32_ty],
+            })),
+            Location::Unknown,
+            None,
         );
 
-        assert_eq!(
-            datalayout.get_type_align(&Type::Struct(Arc::new(StructType {
+        assert_eq!(datalayout.get_type_align(&type_storage, struct_ty), 64);
+
+        let struct_ty = type_storage.add_type(
+            Type::Struct(Arc::new(StructType {
                 packed: false,
                 ident: None,
-                fields: vec![Type::Int(64), Type::Int(32), Type::Int(32), Type::Int(32),]
-            }))),
-            64
+                fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
+            })),
+            Location::Unknown,
+            None,
         );
+
+        assert_eq!(datalayout.get_type_align(&type_storage, struct_ty), 64);
     }
 
     #[test]

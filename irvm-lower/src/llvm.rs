@@ -11,9 +11,9 @@ use irvm::{
     block::{BlockIdx, Instruction},
     common::Location,
     function::Function,
-    module::Module,
-    types::Type,
-    value::Operand,
+    module::{Module, TypeIdx},
+    types::{Type, TypeStorage},
+    value::{ConstValue, Operand},
 };
 
 use itertools::Itertools;
@@ -26,7 +26,10 @@ use llvm_sys::{
     },
 };
 
-pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
+pub fn lower_module_to_llvmir(
+    module: &Module,
+    storage: &TypeStorage,
+) -> Result<(), Box<dyn Error>> {
     unsafe {
         let ctx = core::LLVMContextCreate();
         let module_name = CString::new(module.name.clone())?;
@@ -98,11 +101,11 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
         for (fun_idx, func) in module.functions.iter() {
             let name = CString::new(func.name.as_str()).unwrap();
 
-            let ret_ty = lower_type(ctx, &func.result_type);
+            let ret_ty = lower_type(ctx, storage, func.result_type);
             let mut params = func
                 .parameters
                 .iter()
-                .map(|x| lower_type(ctx, &x.ty))
+                .map(|x| lower_type(ctx, storage, x.ty))
                 .collect_vec();
             let fn_ty = core::LLVMFunctionType(ret_ty, params.as_mut_ptr(), params.len() as u32, 0);
             let fn_ptr = core::LLVMAddFunction(llvm_module, name.as_ptr(), fn_ty);
@@ -160,6 +163,7 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
                 func: func.clone(),
                 builder,
                 dibuilder,
+                storage,
                 blocks: Default::default(),
                 values: Default::default(),
                 block_args: Default::default(),
@@ -197,10 +201,11 @@ pub fn lower_module_to_llvmir(module: &Module) -> Result<(), Box<dyn Error>> {
 }
 
 #[derive(Debug)]
-struct FnCtx {
+struct FnCtx<'m> {
     ctx: LLVMContextRef,
     fn_ptr: LLVMValueRef,
     func: Function,
+    storage: &'m TypeStorage,
     builder: LLVMBuilderRef,
     dibuilder: LLVMDIBuilderRef,
     debug_scope: LLVMMetadataRef,
@@ -426,9 +431,10 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                     irvm::block::MemoryOp::Alloca {
                         ty, num_elements, ..
                     } => {
-                        let ty_ptr = lower_type(ctx.ctx, ty);
+                        let ty_ptr = lower_type(ctx.ctx, ctx.storage, *ty);
                         let value = if *num_elements > 1 {
-                            let int_ty_ptr = lower_type(ctx.ctx, &Type::Int(64));
+                            let int_ty_ptr =
+                                lower_type(ctx.ctx, ctx.storage, ctx.storage.i64_ty().unwrap());
                             let const_val =
                                 core::LLVMConstInt(int_ty_ptr, (*num_elements) as u64, 0);
                             core::LLVMBuildArrayAlloca(
@@ -453,11 +459,11 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                             irvm::block::CallableValue::Pointer(operand, fn_ty) => {
                                 let ptr = lower_operand(ctx, operand);
 
-                                let ret_ty = lower_type(ctx.ctx, &fn_ty.return_type);
+                                let ret_ty = lower_type(ctx.ctx, ctx.storage, fn_ty.return_type);
                                 let mut params = fn_ty
                                     .parameters
                                     .iter()
-                                    .map(|x| lower_type(ctx.ctx, x))
+                                    .map(|x| lower_type(ctx.ctx, ctx.storage, *x))
                                     .collect_vec();
                                 let fn_ty = core::LLVMFunctionType(
                                     ret_ty,
@@ -654,7 +660,8 @@ fn add_preds(ctx: &mut FnCtx, block_idx: BlockIdx) {
             let operand_len = preds.first().unwrap().1.len();
 
             for i in 0..(operand_len) {
-                let phy_ty = lower_type(ctx.ctx, preds.first().unwrap().1[i].get_type());
+                let phy_ty =
+                    lower_type(ctx.ctx, ctx.storage, preds.first().unwrap().1[i].get_type());
                 let phi_node = core::LLVMBuildPhi(ctx.builder, phy_ty, c"".as_ptr());
                 let mut blocks = Vec::new();
                 let mut values = Vec::new();
@@ -690,24 +697,7 @@ fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
                 .values
                 .get(&(block_idx.to_idx(), index.to_idx()))
                 .unwrap(),
-            Operand::Constant(const_value, ty) => {
-                let ty_ptr = lower_type(ctx.ctx, ty);
-                match const_value {
-                    irvm::value::ConstValue::Bool(value) => {
-                        core::LLVMConstInt(ty_ptr, *value as u64, 0_i32)
-                    }
-                    irvm::value::ConstValue::Int(value) => {
-                        core::LLVMConstInt(ty_ptr, *value, 0_i32)
-                    }
-                    irvm::value::ConstValue::Float(value) => core::LLVMConstReal(ty_ptr, *value),
-                    irvm::value::ConstValue::Array(_const_values) => todo!(),
-                    irvm::value::ConstValue::Vector(_const_values) => todo!(),
-                    irvm::value::ConstValue::Struct(_const_values) => todo!(),
-                    irvm::value::ConstValue::NullPtr => todo!(),
-                    irvm::value::ConstValue::Undef => core::LLVMGetUndef(ty_ptr),
-                    irvm::value::ConstValue::Poison => core::LLVMGetPoison(ty_ptr),
-                }
-            }
+            Operand::Constant(const_value, ty) => lower_constant(ctx, const_value, *ty),
             Operand::BlockArgument { block_idx, nth, .. } => {
                 ctx.block_args.get(block_idx).unwrap()[*nth]
             }
@@ -715,9 +705,73 @@ fn lower_operand(ctx: &FnCtx, operand: &Operand) -> LLVMValueRef {
     }
 }
 
-fn lower_type(ctx: LLVMContextRef, ty: &Type) -> LLVMTypeRef {
+fn lower_constant(ctx: &FnCtx, value: &ConstValue, ty: TypeIdx) -> LLVMValueRef {
     unsafe {
-        match ty {
+        let ty_ptr = lower_type(ctx.ctx, ctx.storage, ty);
+        match value {
+            irvm::value::ConstValue::Int(value) => core::LLVMConstInt(ty_ptr, *value, 0_i32),
+            irvm::value::ConstValue::Float(value) => core::LLVMConstReal(ty_ptr, *value),
+            irvm::value::ConstValue::Array(const_values) => {
+                let mut values = Vec::new();
+                let array_ty = if let Type::Array(array_ty) = &ctx.storage.get_type_info(ty).ty {
+                    array_ty
+                } else {
+                    panic!("type mismatch")
+                };
+
+                let typtr = lower_type(ctx.ctx, ctx.storage, array_ty.ty);
+
+                for value in const_values {
+                    let ptr = lower_constant(ctx, value, array_ty.ty);
+                    values.push(ptr);
+                }
+
+                core::LLVMConstArray2(typtr, values.as_mut_ptr(), values.len() as u64)
+            }
+            irvm::value::ConstValue::Vector(const_values) => {
+                let mut values = Vec::new();
+                let vec_ty = if let Type::Vector(vec_ty) = &ctx.storage.get_type_info(ty).ty {
+                    vec_ty
+                } else {
+                    panic!("type mismatch")
+                };
+
+                for value in const_values {
+                    let ptr = lower_constant(ctx, value, vec_ty.ty);
+                    values.push(ptr);
+                }
+
+                core::LLVMConstVector(values.as_mut_ptr(), values.len() as u32)
+            }
+            irvm::value::ConstValue::Struct(const_values) => {
+                let mut const_fields = Vec::new();
+                let struct_ty = if let Type::Struct(struct_ty) = &ctx.storage.get_type_info(ty).ty {
+                    &**struct_ty
+                } else {
+                    panic!("type mismatch")
+                };
+                for (value, field) in const_values.iter().zip(struct_ty.fields.iter()) {
+                    let ptr = lower_constant(ctx, value, *field);
+                    const_fields.push(ptr);
+                }
+                core::LLVMConstStructInContext(
+                    ctx.ctx,
+                    const_fields.as_mut_ptr(),
+                    const_fields.len() as u32,
+                    struct_ty.packed as i32,
+                )
+            }
+            irvm::value::ConstValue::NullPtr => core::LLVMConstPointerNull(ty_ptr),
+            irvm::value::ConstValue::Undef => core::LLVMGetUndef(ty_ptr),
+            irvm::value::ConstValue::Poison => core::LLVMGetPoison(ty_ptr),
+        }
+    }
+}
+
+fn lower_type(ctx: LLVMContextRef, storage: &TypeStorage, ty: TypeIdx) -> LLVMTypeRef {
+    let tyinfo = storage.get_type_info(ty);
+    unsafe {
+        match &tyinfo.ty {
             Type::Int(width) => core::LLVMIntTypeInContext(ctx, *width),
             Type::Half => core::LLVMHalfTypeInContext(ctx),
             Type::BFloat => core::LLVMBFloatTypeInContext(ctx),
@@ -730,18 +784,18 @@ fn lower_type(ctx: LLVMContextRef, ty: &Type) -> LLVMTypeRef {
                 core::LLVMPointerTypeInContext(ctx, address_space.unwrap_or(0))
             }
             Type::Vector(vector_type) => {
-                let inner = lower_type(ctx, &vector_type.ty);
+                let inner = lower_type(ctx, storage, vector_type.ty);
                 core::LLVMVectorType(inner, vector_type.size)
             }
             Type::Array(array_type) => {
-                let inner = lower_type(ctx, &array_type.ty);
+                let inner = lower_type(ctx, storage, array_type.ty);
                 core::LLVMArrayType2(inner, array_type.size)
             }
             Type::Struct(struct_type) => {
                 let mut fields = Vec::new();
 
                 for field in struct_type.fields.iter() {
-                    fields.push(lower_type(ctx, field));
+                    fields.push(lower_type(ctx, storage, *field));
                 }
 
                 if let Some(ident) = &struct_type.ident {

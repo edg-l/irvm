@@ -4,7 +4,8 @@ use crate::{
     common::{CConv, Location},
     error::Error,
     function::FnIdx,
-    types::{FunctionType, Type},
+    module::TypeIdx,
+    types::{FunctionType, Type, TypeStorage},
     value::Operand,
 };
 
@@ -20,7 +21,7 @@ pub struct Block {
     // insert the block into the arena to get an id.
     pub(crate) id: Option<BlockIdx>,
     /// Arguments are made to model phi nodes.
-    pub arguments: Vec<Type>,
+    pub arguments: Vec<TypeIdx>,
     pub instructions: StandardSlab<(Location, Instruction)>,
     pub terminator: Terminator,
 }
@@ -152,7 +153,7 @@ pub enum VectorOp {
 #[derive(Debug, Clone)]
 pub enum MemoryOp {
     Alloca {
-        ty: Type,
+        ty: TypeIdx,
         num_elements: u32,
         inalloca: bool,
         align: Option<u32>,
@@ -183,7 +184,7 @@ pub struct CallOp {
     /// Must match the target fn cconv or ub.
     pub cconv: CConv,
     pub params: Vec<Operand>,
-    pub ret_ty: Type,
+    pub ret_ty: TypeIdx,
     pub ret_attrs: Option<CallReturnAttrs>,
     pub addr_space: Option<u32>,
     /// Only needed if its a varargs function.
@@ -240,18 +241,24 @@ pub struct CallReturnAttrs {
 
 macro_rules! binop_float {
     ($name:ident, $variant:ident) => {
-        pub fn $name(&mut self, lhs: Operand, rhs: Operand, location: Location) -> Result<Operand, Error> {
+        pub fn $name(
+            &mut self,
+            lhs: Operand,
+            rhs: Operand,
+            location: Location,
+        ) -> Result<Operand, Error> {
             if lhs.get_type() != rhs.get_type() {
                 return Err(Error::TypeMismatch {
-                    found: rhs.get_type().clone(),
-                    expected: lhs.get_type().clone(),
+                    found: rhs.get_type(),
+                    expected: lhs.get_type(),
                 });
             }
 
-            let result_type = lhs.get_type().clone();
-            let idx = self
-                .instructions
-                .insert((location, Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs })));
+            let result_type = lhs.get_type();
+            let idx = self.instructions.insert((
+                location,
+                Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs }),
+            ));
 
             Ok(Operand::Value(self.id(), idx, result_type))
         }
@@ -260,23 +267,29 @@ macro_rules! binop_float {
 
 macro_rules! binop_with_overflow_flags {
     ($name:ident, $name_ex:ident, $variant:ident) => {
-        pub fn $name(&mut self, lhs: &Operand, rhs: &Operand, location: Location) -> Result<Operand, Error> {
+        pub fn $name(
+            &mut self,
+            lhs: &Operand,
+            rhs: &Operand,
+            location: Location,
+        ) -> Result<Operand, Error> {
             if lhs.get_type() != rhs.get_type() {
                 return Err(Error::TypeMismatch {
-                    found: rhs.get_type().clone(),
-                    expected: lhs.get_type().clone(),
+                    found: rhs.get_type(),
+                    expected: lhs.get_type(),
                 });
             }
 
-            let result_type = lhs.get_type().clone();
-            let idx = self
-                .instructions
-                .insert((location, Instruction::BinaryOp(BinaryOp::$variant {
+            let result_type = lhs.get_type();
+            let idx = self.instructions.insert((
+                location,
+                Instruction::BinaryOp(BinaryOp::$variant {
                     lhs: lhs.clone(),
                     rhs: rhs.clone(),
                     nsw: false,
                     nuw: false,
-                })));
+                }),
+            ));
 
             Ok(Operand::Value(self.id(), idx, result_type))
         }
@@ -291,20 +304,21 @@ macro_rules! binop_with_overflow_flags {
         ) -> Result<Operand, Error> {
             if lhs.get_type() != rhs.get_type() {
                 return Err(Error::TypeMismatch {
-                    found: rhs.get_type().clone(),
-                    expected: lhs.get_type().clone(),
+                    found: rhs.get_type(),
+                    expected: lhs.get_type(),
                 });
             }
 
-            let result_type = lhs.get_type().clone();
-            let idx = self
-                .instructions
-                .insert((location, Instruction::BinaryOp(BinaryOp::$variant {
+            let result_type = lhs.get_type();
+            let idx = self.instructions.insert((
+                location,
+                Instruction::BinaryOp(BinaryOp::$variant {
                     lhs: lhs.clone(),
                     rhs: rhs.clone(),
                     nsw,
                     nuw,
-                })));
+                }),
+            ));
 
             Ok(Operand::Value(self.id(), idx, result_type))
         }
@@ -312,7 +326,7 @@ macro_rules! binop_with_overflow_flags {
 }
 
 impl Block {
-    pub(crate) fn new(arguments: &[Type]) -> Self {
+    pub(crate) fn new(arguments: &[TypeIdx]) -> Self {
         Self {
             instructions: StandardSlab::new(),
             terminator: Terminator::Ret((Location::Unknown, None)),
@@ -347,7 +361,7 @@ impl Block {
         self.terminator = Terminator::Br {
             block: target,
             arguments: arguments.to_vec(),
-            location
+            location,
         };
     }
 
@@ -358,7 +372,7 @@ impl Block {
         cond: &Operand,
         then_block_args: &[Operand],
         else_block_args: &[Operand],
-        location: Location
+        location: Location,
     ) {
         self.terminator = Terminator::CondBr {
             then_block,
@@ -366,7 +380,7 @@ impl Block {
             cond: cond.clone(),
             if_args: then_block_args.to_vec(),
             then_args: else_block_args.to_vec(),
-            location
+            location,
         };
     }
 
@@ -380,24 +394,25 @@ impl Block {
         rhs: &Operand,
         signed: bool,
         exact: bool,
-        location: Location
+        location: Location,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BinaryOp(BinaryOp::Div {
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BinaryOp(BinaryOp::Div {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
                 signed,
                 exact,
-            })));
+            }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
@@ -407,19 +422,20 @@ impl Block {
         lhs: Operand,
         rhs: Operand,
         signed: bool,
-        location: Location
+        location: Location,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BinaryOp(BinaryOp::Rem { lhs, rhs, signed })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BinaryOp(BinaryOp::Rem { lhs, rhs, signed }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
@@ -430,21 +446,24 @@ impl Block {
     binop_float!(instr_fdiv, FDiv);
     binop_float!(instr_frem, FRem);
 
-    pub fn instr_shl(&mut self, lhs: Operand, rhs: Operand, location: Location) -> Result<Operand, Error> {
+    pub fn instr_shl(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        location: Location,
+    ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Shl {
-                lhs,
-                rhs,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Shl { lhs, rhs }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
@@ -454,23 +473,20 @@ impl Block {
         lhs: Operand,
         rhs: Operand,
         exact: bool,
-        location: Location
+        location: Location,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Lshr {
-                lhs,
-                rhs,
-                exact,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Lshr { lhs, rhs, exact }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
@@ -480,42 +496,42 @@ impl Block {
         lhs: Operand,
         rhs: Operand,
         exact: bool,
-        location: Location
+        location: Location,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Ashr {
-                lhs,
-                rhs,
-                exact,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Ashr { lhs, rhs, exact }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
 
-    pub fn instr_and(&mut self, lhs: Operand, rhs: Operand, location: Location) -> Result<Operand, Error> {
+    pub fn instr_and(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        location: Location,
+    ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::And {
-                lhs,
-                rhs,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::And { lhs, rhs }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
@@ -525,115 +541,128 @@ impl Block {
         lhs: Operand,
         rhs: Operand,
         disjoint: bool,
-        location: Location
+        location: Location,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Or {
-                lhs,
-                rhs,
-                disjoint,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Or { lhs, rhs, disjoint }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
 
-    pub fn instr_xor(&mut self, lhs: Operand, rhs: Operand, location: Location) -> Result<Operand, Error> {
+    pub fn instr_xor(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        location: Location,
+    ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Xor {
-                lhs,
-                rhs,
-            })));
+        let result_type = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Xor { lhs, rhs }),
+        ));
 
         Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     pub fn instr_alloca(
         &mut self,
-        ty: Type,
+        alloca_ty: TypeIdx,
         num_elements: u32,
         align: Option<u32>,
-        location: Location
+        location: Location,
+        type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
-        let idx = self
-            .instructions
-            .insert((location, Instruction::MemoryOp(MemoryOp::Alloca {
-                ty,
+        let idx = self.instructions.insert((
+            location,
+            Instruction::MemoryOp(MemoryOp::Alloca {
+                ty: alloca_ty,
                 num_elements,
                 inalloca: false,
                 align,
                 addr_space: None,
-            })));
+            }),
+        ));
 
-        Ok(Operand::Value(self.id(), idx, Type::Ptr(None)))
+        Ok(Operand::Value(
+            self.id(),
+            idx,
+            type_storage.ptr_ty.expect("ptr ty missing"),
+        ))
     }
 
     pub fn instr_alloca_ex(
         &mut self,
-        ty: Type,
+        alloca_ty: TypeIdx,
         num_elements: u32,
         align: Option<u32>,
         inalloca: bool,
         addr_space: Option<u32>,
-        location: Location
+        location: Location,
+        type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
-        let idx = self
-            .instructions
-            .insert((location, Instruction::MemoryOp(MemoryOp::Alloca {
-                ty,
+        let idx = self.instructions.insert((
+            location,
+            Instruction::MemoryOp(MemoryOp::Alloca {
+                ty: alloca_ty,
                 num_elements,
                 inalloca,
                 align,
                 addr_space,
-            })));
+            }),
+        ));
 
-        Ok(Operand::Value(self.id(), idx, Type::Ptr(None)))
+        Ok(Operand::Value(
+            self.id(),
+            idx,
+            type_storage.ptr_ty.expect("ptr ty missing"),
+        ))
     }
 
     pub fn instr_call(
         &mut self,
         fn_idx: FnIdx,
         params: &[Operand],
-        ret_ty: &Type,
-        location: Location
+        ret_ty: TypeIdx,
+        location: Location,
     ) -> Result<Operand, Error> {
-        let idx = self
-            .instructions
-            .insert((location, Instruction::OtherOp(OtherOp::Call(CallOp {
+        let idx = self.instructions.insert((
+            location,
+            Instruction::OtherOp(OtherOp::Call(CallOp {
                 tail: false,
                 musttail: false,
                 notail: false,
                 cconv: CConv::default(),
                 params: params.to_vec(),
-                ret_ty: ret_ty.clone(),
+                ret_ty,
                 ret_attrs: None,
                 addr_space: None,
                 fn_ty: None,
                 fn_target: CallableValue::Symbol(fn_idx),
-            }))));
+            })),
+        ));
 
-        Ok(Operand::Value(self.id(), idx, ret_ty.clone()))
+        Ok(Operand::Value(self.id(), idx, ret_ty))
     }
 
     pub fn instr_call_ex(&mut self, call_op: CallOp, location: Location) -> Result<Operand, Error> {
-        let ret_ty = call_op.ret_ty.clone();
+        let ret_ty = call_op.ret_ty;
         let idx = self
             .instructions
             .insert((location, Instruction::OtherOp(OtherOp::Call(call_op))));
@@ -646,24 +675,31 @@ impl Block {
         cond: IcmpCond,
         lhs: Operand,
         rhs: Operand,
-        location: Location
+        location: Location,
+        type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
         if lhs.get_type() != rhs.get_type() {
             return Err(Error::TypeMismatch {
-                found: rhs.get_type().clone(),
-                expected: lhs.get_type().clone(),
+                found: rhs.get_type(),
+                expected: lhs.get_type(),
             });
         }
 
-        let result_type = lhs.get_type().clone();
-        let idx = self
-            .instructions
-            .insert((location, Instruction::OtherOp(OtherOp::Icmp { cond, lhs, rhs })));
+        let result_type_idx = lhs.get_type();
+        let idx = self.instructions.insert((
+            location,
+            Instruction::OtherOp(OtherOp::Icmp { cond, lhs, rhs }),
+        ));
 
-        if let Type::Vector(_) = result_type {
-            Ok(Operand::Value(self.id(), idx, result_type))
+        let result_type = type_storage.get_type_info(result_type_idx);
+        if let Type::Vector(_) = result_type.ty {
+            Ok(Operand::Value(self.id(), idx, result_type_idx))
         } else {
-            Ok(Operand::Value(self.id(), idx, Type::Int(1)))
+            Ok(Operand::Value(
+                self.id(),
+                idx,
+                type_storage.i1_ty.expect("i1 type missing"),
+            ))
         }
     }
 }

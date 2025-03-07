@@ -1,6 +1,5 @@
 use crate::types::Type;
 
-
 pub trait DebugNameProvider {
     fn get_name_for_type(&self, ty: &Type) -> String;
 }
@@ -19,9 +18,9 @@ impl DebugNameProvider for DefaultDebugNameProvider {
             Type::X86Fp80 => todo!(),
             Type::PpcFp128 => todo!(),
             Type::Ptr(_) => todo!(),
-            Type::Vector(vector_type) => todo!(),
-            Type::Array(array_type) => todo!(),
-            Type::Struct(struct_type) => todo!(),
+            Type::Vector(_vector_type) => todo!(),
+            Type::Array(_array_type) => todo!(),
+            Type::Struct(_struct_type) => todo!(),
         }
     }
 }

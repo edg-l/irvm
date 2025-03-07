@@ -64,7 +64,7 @@ pub enum RuntimePreemption {
     DsoLocal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
     Unknown,
     File(FileLocation),
@@ -80,7 +80,7 @@ impl Location {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileLocation {
     pub file: Arc<PathBuf>,
     pub line: u32,
