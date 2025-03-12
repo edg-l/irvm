@@ -17,12 +17,12 @@ mod test {
 
     #[test]
     fn test_function_llvm() -> Result<(), Box<dyn Error>> {
-        let mut module = Module::new("example");
+        let mut module = Module::new("example", Location::unknown());
         let mut storage = TypeStorage::new();
-        let bool_ty = storage.add_type(Type::Int(1), Location::Unknown, Some("bool"));
+        let _bool_ty = storage.add_type(Type::Int(1), Location::Unknown, Some("bool"));
         let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, Some("i32"));
-        let i64_ty = storage.add_type(Type::Int(64), Location::Unknown, Some("i64"));
-        let ptr_ty = storage.add_type(
+        let _i64_ty = storage.add_type(Type::Int(64), Location::Unknown, Some("i64"));
+        let _ptr_ty = storage.add_type(
             Type::Ptr {
                 pointee: i32_ty,
                 address_space: None,
@@ -124,7 +124,7 @@ mod test {
                 .instr_ret(Some(&value), Location::Unknown);
         }
 
-        lower_module_to_llvmir(&module, &storage)?;
+        lower_module_to_llvmir(&module, &storage, crate::llvm::OutputCompilation::Stdout)?;
 
         Ok(())
     }

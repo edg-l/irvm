@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use target_lexicon::Triple;
 use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
@@ -19,23 +17,19 @@ pub struct Module {
     pub target_triple: Triple,
     pub functions: StandardSlab<Function>,
     pub types: StandardSlab<TypeInfo>,
-    pub file: Option<PathBuf>,
+    pub location: Location,
 }
 
 impl Module {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, location: Location) -> Self {
         Self {
             name: name.to_string(),
             data_layout: DataLayout::default_host(),
             target_triple: Triple::host(),
             functions: StandardSlab::new(),
             types: StandardSlab::new(),
-            file: None,
+            location,
         }
-    }
-
-    pub fn set_file(&mut self, file: PathBuf) {
-        self.file = Some(file);
     }
 
     pub fn add_function(

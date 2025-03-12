@@ -64,6 +64,12 @@ pub struct TypeStorage {
     pub(crate) i64_ty: Option<TypeIdx>,
 }
 
+impl Default for TypeStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeStorage {
     pub fn new() -> Self {
         Self {

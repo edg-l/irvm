@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    error::Error,
     ffi::{CStr, CString},
-    path::Path,
+    path::{Path, PathBuf},
     ptr::null_mut,
     rc::Rc,
 };
@@ -27,10 +26,25 @@ use llvm_sys::{
     },
 };
 
+#[derive(Debug, Clone)]
+pub enum OutputCompilation {
+    Stdout,
+    File(PathBuf),
+}
+
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum Error {
+    #[error("llvm error: {:?}", 0)]
+    LLVMError(String),
+    #[error(transparent)]
+    NulError(#[from] std::ffi::NulError),
+}
+
 pub fn lower_module_to_llvmir(
     module: &Module,
     storage: &TypeStorage,
-) -> Result<(), Box<dyn Error>> {
+    output: OutputCompilation,
+) -> Result<(), Error> {
     unsafe {
         let ctx = core::LLVMContextCreate();
         let module_name = CString::new(module.name.clone())?;
@@ -47,17 +61,7 @@ pub fn lower_module_to_llvmir(
         let builder = core::LLVMCreateBuilderInContext(ctx);
         let dibuilder = debuginfo::LLVMCreateDIBuilder(llvm_module);
 
-        let compile_unit_file = if let Some(file) = &module.file {
-            get_difile(dibuilder, file)
-        } else {
-            debuginfo::LLVMDIBuilderCreateFile(
-                dibuilder,
-                c"/dev/stdin".as_ptr(),
-                c"/dev/stdin".count_bytes(),
-                c"".as_ptr(),
-                0,
-            )
-        };
+        let compile_unit_file = get_difile_location(dibuilder, &module.location);
 
         let producer = c"IRVM version 0.1.0";
         let flags = c"";
@@ -116,20 +120,18 @@ pub fn lower_module_to_llvmir(
             let mut file = compile_unit_file;
 
             let mut line = 0;
-            let mut col = 0;
             match &func.location {
                 Location::Unknown => {}
                 Location::File(file_location) => {
                     file = get_difile(dibuilder, &file_location.file);
                     line = file_location.line;
-                    col = file_location.col;
                 }
             }
 
             let mut debug_param_types = Vec::new();
 
             for param in func.parameters.iter() {
-                let ptr = lower_debug_type(ctx, &module.data_layout, dibuilder, storage, param.ty);
+                let ptr = lower_debug_type(&module.data_layout, dibuilder, storage, param.ty);
                 debug_param_types.push(ptr);
             }
 
@@ -141,13 +143,8 @@ pub fn lower_module_to_llvmir(
                 0,
             );
 
-            let ret_debug_ty = lower_debug_type(
-                ctx,
-                &module.data_layout,
-                dibuilder,
-                storage,
-                func.result_type,
-            );
+            let _ret_debug_ty =
+                lower_debug_type(&module.data_layout, dibuilder, storage, func.result_type);
 
             let di_func = debuginfo::LLVMDIBuilderCreateFunction(
                 dibuilder,
@@ -201,19 +198,43 @@ pub fn lower_module_to_llvmir(
             debuginfo::LLVMDIBuilderFinalizeSubprogram(dibuilder, dfunc);
         }
 
-        core::LLVMDumpModule(llvm_module);
+        if let OutputCompilation::Stdout = output {
+            core::LLVMDumpModule(llvm_module);
+        }
 
         let mut out_msg: *mut i8 = null_mut();
         let ok = llvm_sys::analysis::LLVMVerifyModule(
             llvm_module,
-            llvm_sys::analysis::LLVMVerifierFailureAction::LLVMPrintMessageAction,
+            llvm_sys::analysis::LLVMVerifierFailureAction::LLVMReturnStatusAction,
             &raw mut out_msg,
         );
+
         if ok != 0 {
-            let msg = CStr::from_ptr(out_msg);
-            dbg!(msg);
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            core::LLVMDisposeModule(llvm_module);
+            core::LLVMContextDispose(ctx);
+
+            return Err(Error::LLVMError(msg));
         }
-        assert_eq!(ok, 0);
+
+        if !out_msg.is_null() {
+            core::LLVMDisposeMessage(out_msg);
+            out_msg = null_mut();
+        }
+
+        if let OutputCompilation::File(file) = output {
+            let file = CString::new(&*file.to_string_lossy())?;
+            core::LLVMPrintModuleToFile(llvm_module, file.as_ptr(), &raw mut out_msg);
+        }
+
         core::LLVMDisposeModule(llvm_module);
         core::LLVMContextDispose(ctx);
     }
@@ -629,6 +650,21 @@ fn add_block(ctx: &mut FnCtx, block_idx: BlockIdx, name: Option<String>) -> LLVM
     }
 }
 
+fn get_difile_location(dibuilder: LLVMDIBuilderRef, location: &Location) -> LLVMMetadataRef {
+    match location {
+        Location::Unknown => unsafe {
+            debuginfo::LLVMDIBuilderCreateFile(
+                dibuilder,
+                c"/dev/stdin".as_ptr(),
+                c"/dev/stdin".count_bytes(),
+                c"".as_ptr(),
+                0,
+            )
+        },
+        Location::File(file_location) => get_difile(dibuilder, &file_location.file),
+    }
+}
+
 fn get_difile(dibuilder: LLVMDIBuilderRef, file: &Path) -> LLVMMetadataRef {
     let parent = if let Some(parent) = file.parent() {
         CString::new(parent.display().to_string()).unwrap()
@@ -851,7 +887,6 @@ fn lower_type(ctx: LLVMContextRef, storage: &TypeStorage, ty: TypeIdx) -> LLVMTy
 }
 
 fn lower_debug_type(
-    ctx: LLVMContextRef,
     datalayout: &DataLayout,
     builder: LLVMDIBuilderRef,
     storage: &TypeStorage,
@@ -905,7 +940,7 @@ fn lower_debug_type(
                 pointee,
                 address_space,
             } => {
-                let pointee_ptr = lower_debug_type(ctx, datalayout, builder, storage, *pointee);
+                let pointee_ptr = lower_debug_type(datalayout, builder, storage, *pointee);
                 debuginfo::LLVMDIBuilderCreatePointerType(
                     builder,
                     pointee_ptr,
@@ -916,9 +951,9 @@ fn lower_debug_type(
                     name.count_bytes(),
                 )
             }
-            Type::Vector(vector_type) => todo!(),
-            Type::Array(array_type) => todo!(),
-            Type::Struct(struct_type) => todo!(),
+            Type::Vector(_vector_type) => todo!(),
+            Type::Array(_array_type) => todo!(),
+            Type::Struct(_struct_type) => todo!(),
         }
     }
 }

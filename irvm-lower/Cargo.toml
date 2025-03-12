@@ -12,3 +12,4 @@ license = "Apache-2.0"
 llvm-sys = "191.0.0"
 irvm = { path = "..", version = "0.1.0" }
 itertools = "0.14.0"
+thiserror = "2.0.12"
