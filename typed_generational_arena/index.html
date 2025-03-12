@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="  "><title>typed_generational_arena - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="typed_generational_arena" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0 (4d91de4e4 2025-02-17)" data-channel="1.85.0" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../typed_generational_arena/index.html">typed_<wbr>generational_<wbr>arena</a><span class="version">0.2.6</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#what-why" title="What? Why?">What? Why?</a></li><li><a href="#features" title="Features">Features</a></li><li><a href="#usage" title="Usage">Usage</a></li><li><a href="#no_std" title="`no_std`"><code>no_std</code></a><ul><li><a href="#serialization-and-deserialization-with-serde" title="Serialization and Deserialization with `serde`">Serialization and Deserialization with <code>serde</code></a></li></ul></li></ul><h3><a href="#structs">Crate Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>typed_generational_arena</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/typed_generational_arena/lib.rs.html#1-1529">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p><a href="https://docs.rs/typed-generational-arena/"><img src="https://docs.rs/typed-generational-arena/badge.svg" alt="" /></a>
+<a href="https://crates.io/crates/typed-generational-arena"><img src="https://img.shields.io/crates/v/typed-generational-arena.svg" alt="" /></a>
+<a href="https://crates.io/crates/typed-generational-arena"><img src="https://img.shields.io/crates/d/typed-generational-arena.svg" alt="" /></a></p>
+<p>A safe arena allocator that allows deletion without suffering from <a href="https://en.wikipedia.org/wiki/ABA_problem">the ABA
+problem</a> by using generational type-safe
+indices. Forked from <a href="https://github.com/fitzgen/generational-arena/">generational-arena</a>.</p>
+<p>Inspired by <a href="http://rustconf.com/program.html#closingkeynote">Catherine West’s closing keynote at RustConf
+2018</a>, where these ideas
+were presented in the context of an Entity-Component-System for games
+programming.</p>
+<h3 id="what-why"><a class="doc-anchor" href="#what-why">§</a>What? Why?</h3>
+<p>Imagine you are working with a graph and you want to add and delete individual
+nodes at a time, or you are writing a game and its world consists of many
+inter-referencing objects with dynamic lifetimes that depend on user
+input. These are situations where matching Rust’s ownership and lifetime rules
+can get tricky.</p>
+<p>It doesn’t make sense to use shared ownership with interior mutability (ie
+<code>Rc&lt;RefCell&lt;T&gt;&gt;</code> or <code>Arc&lt;Mutex&lt;T&gt;&gt;</code>) nor borrowed references (ie <code>&amp;'a T</code> or <code>&amp;'a mut T</code>) for structures. The cycles rule out reference counted types, and the
+required shared mutability rules out borrows. Furthermore, lifetimes are dynamic
+and don’t follow the borrowed-data-outlives-the-borrower discipline.</p>
+<p>In these situations, it is tempting to store objects in a <code>Vec&lt;T&gt;</code> and have them
+reference each other via their indices. No more borrow checker or ownership
+problems! Often, this solution is good enough.</p>
+<p>However, now we can’t delete individual items from that <code>Vec&lt;T&gt;</code> when we no
+longer need them, because we end up either</p>
+<ul>
+<li>
+<p>messing up the indices of every element that follows the deleted one, or</p>
+</li>
+<li>
+<p>suffering from the <a href="https://en.wikipedia.org/wiki/ABA_problem">ABA
+problem</a>. To elaborate further, if
+we tried to replace the <code>Vec&lt;T&gt;</code> with a <code>Vec&lt;Option&lt;T&gt;&gt;</code>, and delete an
+element by setting it to <code>None</code>, then we create the possibility for this buggy
+sequence:</p>
+<ul>
+<li>
+<p><code>obj1</code> references <code>obj2</code> at index <code>i</code></p>
+</li>
+<li>
+<p>someone else deletes <code>obj2</code> from index <code>i</code>, setting that element to <code>None</code></p>
+</li>
+<li>
+<p>a third thing allocates <code>obj3</code>, which ends up at index <code>i</code>, because the
+element at that index is <code>None</code> and therefore available for allocation</p>
+</li>
+<li>
+<p><code>obj1</code> attempts to get <code>obj2</code> at index <code>i</code>, but incorrectly is given
+<code>obj3</code>, when instead the get should fail.</p>
+</li>
+</ul>
+</li>
+</ul>
+<p>By introducing a monotonically increasing generation counter to the collection,
+associating each element in the collection with the generation when it was
+inserted, and getting elements from the collection with the <em>pair</em> of index and
+the generation at the time when the element was inserted, then we can solve the
+aforementioned ABA problem. When indexing into the collection, if the index
+pair’s generation does not match the generation of the element at that index,
+then the operation fails.</p>
+<h3 id="features"><a class="doc-anchor" href="#features">§</a>Features</h3>
+<ul>
+<li>Zero <code>unsafe</code></li>
+<li>Well tested, including quickchecks</li>
+<li><code>no_std</code> compatibility</li>
+<li>All the trait implementations you expect: <code>IntoIterator</code>, <code>FromIterator</code>,
+<code>Extend</code>, etc…</li>
+</ul>
+<h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3>
+<p>First, add <code>typed-generational-arena</code> to your <code>Cargo.toml</code>:</p>
+<div class="example-wrap"><pre class="language-toml"><code>[dependencies]
+typed-generational-arena = &quot;0.2&quot;</code></pre></div>
+<p>Then, import the crate and use one of the variations of the
+<a href="./struct.Arena.html"><code>typed_generational_arena::Arena</code></a> type!
+In these examples, we use <code>typed_generational_arena::StandardArena</code>,
+but you can use any combination of index and generation ID
+best fits your purposes.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">extern crate </span>typed_generational_arena;
+<span class="kw">use </span>typed_generational_arena::StandardArena;
+
+<span class="kw">let </span><span class="kw-2">mut </span>arena = StandardArena::new();
+
+<span class="comment">// Insert some elements into the arena.
+</span><span class="kw">let </span>rza = arena.insert(<span class="string">"Robert Fitzgerald Diggs"</span>);
+<span class="kw">let </span>gza = arena.insert(<span class="string">"Gary Grice"</span>);
+<span class="kw">let </span>bill = arena.insert(<span class="string">"Bill Gates"</span>);
+
+<span class="comment">// Inserted elements can be accessed infallibly via indexing (and missing
+// entries will panic).
+</span><span class="macro">assert_eq!</span>(arena[rza], <span class="string">"Robert Fitzgerald Diggs"</span>);
+
+<span class="comment">// Alternatively, the `get` and `get_mut` methods provide fallible lookup.
+</span><span class="kw">if let </span><span class="prelude-val">Some</span>(genius) = arena.get(gza) {
+    <span class="macro">println!</span>(<span class="string">"The gza gza genius: {}"</span>, genius);
+}
+<span class="kw">if let </span><span class="prelude-val">Some</span>(val) = arena.get_mut(bill) {
+    <span class="kw-2">*</span>val = <span class="string">"Bill Gates doesn't belong in this set..."</span>;
+}
+
+<span class="comment">// We can remove elements.
+</span>arena.remove(bill);
+
+<span class="comment">// Insert a new one.
+</span><span class="kw">let </span>murray = arena.insert(<span class="string">"Bill Murray"</span>);
+
+<span class="comment">// The arena does not contain `bill` anymore, but it does contain `murray`, even
+// though they are almost certainly at the same index within the arena in
+// practice. Ambiguities are resolved with an associated generation tag.
+</span><span class="macro">assert!</span>(!arena.contains(bill));
+<span class="macro">assert!</span>(arena.contains(murray));
+
+<span class="comment">// Iterate over everything inside the arena.
+</span><span class="kw">for </span>(idx, value) <span class="kw">in </span><span class="kw-2">&amp;</span>arena {
+    <span class="macro">println!</span>(<span class="string">"{:?} is at {:?}"</span>, value, idx);
+}</code></pre></div>
+<h3 id="no_std"><a class="doc-anchor" href="#no_std">§</a><code>no_std</code></h3>
+<p>To enable <code>no_std</code> compatibility, disable the on-by-default “std” feature. This
+currently requires nightly Rust and <code>feature(alloc)</code> to get access to <code>Vec</code>.</p>
+<div class="example-wrap"><pre class="language-toml"><code>[dependencies]
+typed-generational-arena = { version = &quot;0.2&quot;, default-features = false }</code></pre></div><h4 id="serialization-and-deserialization-with-serde"><a class="doc-anchor" href="#serialization-and-deserialization-with-serde">§</a>Serialization and Deserialization with <a href="https://crates.io/crates/serde"><code>serde</code></a></h4>
+<p>To enable serialization/deserialization support, enable the “serde” feature.</p>
+<div class="example-wrap"><pre class="language-toml"><code>[dependencies]
+typed-generational-arena = { version = &quot;0.2&quot;, features = [&quot;serde&quot;] }</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.Arena.html" title="struct typed_generational_arena::Arena">Arena</a></div><div class="desc docblock-short">The <code>Arena</code> allows inserting and removing elements that are referred to by
+<code>Index</code>.</div></li><li><div class="item-name"><a class="struct" href="struct.DisableRemoval.html" title="struct typed_generational_arena::DisableRemoval">Disable<wbr>Removal</a></div><div class="desc docblock-short">If this is used as a generational index, then the arena is no longer generational
+and does not allow element removal</div></li><li><div class="item-name"><a class="struct" href="struct.Drain.html" title="struct typed_generational_arena::Drain">Drain</a></div><div class="desc docblock-short">An iterator that removes elements from the arena.</div></li><li><div class="item-name"><a class="struct" href="struct.IgnoreGeneration.html" title="struct typed_generational_arena::IgnoreGeneration">Ignore<wbr>Generation</a></div><div class="desc docblock-short">If this is used as a generational index, then the arena ignores generation</div></li><li><div class="item-name"><a class="struct" href="struct.Index.html" title="struct typed_generational_arena::Index">Index</a></div><div class="desc docblock-short">An index (and generation) into an <code>Arena</code>.</div></li><li><div class="item-name"><a class="struct" href="struct.IntoIter.html" title="struct typed_generational_arena::IntoIter">Into<wbr>Iter</a></div><div class="desc docblock-short">An iterator over the elements in an arena.</div></li><li><div class="item-name"><a class="struct" href="struct.Iter.html" title="struct typed_generational_arena::Iter">Iter</a></div><div class="desc docblock-short">An iterator over shared references to the elements in an arena.</div></li><li><div class="item-name"><a class="struct" href="struct.IterMut.html" title="struct typed_generational_arena::IterMut">IterMut</a></div><div class="desc docblock-short">An iterator over exclusive references to elements in this arena.</div></li><li><div class="item-name"><a class="struct" href="struct.NonZeroIndex.html" title="struct typed_generational_arena::NonZeroIndex">NonZero<wbr>Index</a></div><div class="desc docblock-short">An arena index which is always nonzero. Useful for Option<T> size optimizations</div></li><li><div class="item-name"><a class="struct" href="struct.NonzeroGeneration.html" title="struct typed_generational_arena::NonzeroGeneration">Nonzero<wbr>Generation</a></div><div class="desc docblock-short">A generation counter which is always nonzero. Useful for size optimizations on Option<Index></div></li><li><div class="item-name"><a class="struct" href="struct.NonzeroWrapGeneration.html" title="struct typed_generational_arena::NonzeroWrapGeneration">Nonzero<wbr>Wrap<wbr>Generation</a></div><div class="desc docblock-short">A wrapping generation counter which is always nonzero.
+Useful for size optimizations on Option<Index></div></li></ul><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.ArenaIndex.html" title="trait typed_generational_arena::ArenaIndex">Arena<wbr>Index</a></div><div class="desc docblock-short">A type which can be used as an index to an arena</div></li><li><div class="item-name"><a class="trait" href="trait.FixedGenerationalIndex.html" title="trait typed_generational_arena::FixedGenerationalIndex">Fixed<wbr>Generational<wbr>Index</a></div><div class="desc docblock-short">A type which can be used as the index of a generation which may not be able to be incremented</div></li><li><div class="item-name"><a class="trait" href="trait.GenerationalIndex.html" title="trait typed_generational_arena::GenerationalIndex">Generational<wbr>Index</a></div><div class="desc docblock-short">A type which can be used as the index of a generation, which can be incremented</div></li><li><div class="item-name"><a class="trait" href="trait.IgnoredGeneration.html" title="trait typed_generational_arena::IgnoredGeneration">Ignored<wbr>Generation</a></div><div class="desc docblock-short">A marker trait which says that a generation type is ignored</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.NanoArena.html" title="type typed_generational_arena::NanoArena">Nano<wbr>Arena</a></div><div class="desc docblock-short">An arena which can only hold up to (2^{8}) elements, but unlimited
+generations, with the caveat that generations after (2^{8}) wrap
+and hence may  collide, leading, for example, to reading a new value when
+the old one was deleted.</div></li><li><div class="item-name"><a class="type" href="type.NanoIndex.html" title="type typed_generational_arena::NanoIndex">Nano<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>NanoArena</code></div></li><li><div class="item-name"><a class="type" href="type.PicoArena.html" title="type typed_generational_arena::PicoArena">Pico<wbr>Arena</a></div><div class="desc docblock-short">An arena which can only hold up to (2^{8} - 1) elements, but unlimited
+generations, with the caveat that generations after (2^{8} - 1) wrap
+and hence may  collide, leading, for example, to reading a new value when
+the old one was deleted.</div></li><li><div class="item-name"><a class="type" href="type.PicoIndex.html" title="type typed_generational_arena::PicoIndex">Pico<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>NanoArena</code></div></li><li><div class="item-name"><a class="type" href="type.PtrSlab.html" title="type typed_generational_arena::PtrSlab">PtrSlab</a></div><div class="desc docblock-short">A slab arena which can hold up to <code>std::usize::MAX - 1</code> elements but does
+<em>not</em> support element removal, and has size optimized optional indices</div></li><li><div class="item-name"><a class="type" href="type.PtrSlabIndex.html" title="type typed_generational_arena::PtrSlabIndex">PtrSlab<wbr>Index</a></div><div class="desc docblock-short">An index into a <code>PtrSlab&lt;T&gt;</code></div></li><li><div class="item-name"><a class="type" href="type.Slab.html" title="type typed_generational_arena::Slab">Slab</a></div><div class="desc docblock-short">A slab arena with a given index, which does <em>not</em> support efficient removal</div></li><li><div class="item-name"><a class="type" href="type.SlabIndex.html" title="type typed_generational_arena::SlabIndex">Slab<wbr>Index</a></div><div class="desc docblock-short">An index into a slab of type <code>T</code> by a certain type</div></li><li><div class="item-name"><a class="type" href="type.SmallArena.html" title="type typed_generational_arena::SmallArena">Small<wbr>Arena</a></div><div class="desc docblock-short">An arena which can only hold up to (2^{32} - 1) elements and generations</div></li><li><div class="item-name"><a class="type" href="type.SmallIndex.html" title="type typed_generational_arena::SmallIndex">Small<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>StandardArena</code></div></li><li><div class="item-name"><a class="type" href="type.SmallPtrSlab.html" title="type typed_generational_arena::SmallPtrSlab">Small<wbr>PtrSlab</a></div><div class="desc docblock-short">A slab arena which can hold up to <code>2^{32} - 1</code> elements but does <em>not</em> support
+element removal, and has size optimized optional indices</div></li><li><div class="item-name"><a class="type" href="type.SmallPtrSlabIndex.html" title="type typed_generational_arena::SmallPtrSlabIndex">Small<wbr>PtrSlab<wbr>Index</a></div><div class="desc docblock-short">An index into a <code>SmallPtrSlab&lt;T&gt;</code></div></li><li><div class="item-name"><a class="type" href="type.SmallSlab.html" title="type typed_generational_arena::SmallSlab">Small<wbr>Slab</a></div><div class="desc docblock-short">A slab arena which can hold up to <code>2^{32}</code> elements but does <em>not</em> support
+element removal</div></li><li><div class="item-name"><a class="type" href="type.SmallSlabIndex.html" title="type typed_generational_arena::SmallSlabIndex">Small<wbr>Slab<wbr>Index</a></div><div class="desc docblock-short">An index into a <code>SmallSlab&lt;T&gt;</code></div></li><li><div class="item-name"><a class="type" href="type.StandardArena.html" title="type typed_generational_arena::StandardArena">Standard<wbr>Arena</a></div><div class="desc docblock-short">A standard arena of <code>T</code> indexed by <code>usize</code>, with <code>2^{64} - 1</code> generations</div></li><li><div class="item-name"><a class="type" href="type.StandardIndex.html" title="type typed_generational_arena::StandardIndex">Standard<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>StandardArena</code></div></li><li><div class="item-name"><a class="type" href="type.StandardSlab.html" title="type typed_generational_arena::StandardSlab">Standard<wbr>Slab</a></div><div class="desc docblock-short">A standard slab arena which can hold up to <code>std::usize::MAX</code> elements but does
+<em>not</em> support element removal</div></li><li><div class="item-name"><a class="type" href="type.StandardSlabIndex.html" title="type typed_generational_arena::StandardSlabIndex">Standard<wbr>Slab<wbr>Index</a></div><div class="desc docblock-short">An index into a <code>Slab&lt;T&gt;</code></div></li><li><div class="item-name"><a class="type" href="type.TinyArena.html" title="type typed_generational_arena::TinyArena">Tiny<wbr>Arena</a></div><div class="desc docblock-short">An arena which can only hold up to (2^{16}) elements and (2^{16} - 1) generations</div></li><li><div class="item-name"><a class="type" href="type.TinyIndex.html" title="type typed_generational_arena::TinyIndex">Tiny<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>StandardArena</code></div></li><li><div class="item-name"><a class="type" href="type.TinyWrapArena.html" title="type typed_generational_arena::TinyWrapArena">Tiny<wbr>Wrap<wbr>Arena</a></div><div class="desc docblock-short">An arena which can only hold up to (2^{16}) elements, but unlimited
+generations, with the caveat that generations after (2^{16} - 1) wrap and hence
+may, with low probability,  collide,  leading, for example, to reading a new value
+when the old one was deleted.</div></li><li><div class="item-name"><a class="type" href="type.TinyWrapIndex.html" title="type typed_generational_arena::TinyWrapIndex">Tiny<wbr>Wrap<wbr>Index</a></div><div class="desc docblock-short">A typed index into a <code>TinyWrapArena</code></div></li><li><div class="item-name"><a class="type" href="type.U64Arena.html" title="type typed_generational_arena::U64Arena">U64Arena</a></div><div class="desc docblock-short">An arena of <code>T</code> indexed by <code>usize</code>, with <code>2^{64}</code> generations</div></li><li><div class="item-name"><a class="type" href="type.U64Index.html" title="type typed_generational_arena::U64Index">U64Index</a></div><div class="desc docblock-short">An index into a <code>U64Arena</code></div></li></ul><script type="text/json" id="notable-traits-data">{"Drain<'_, T, I, G>":"<h3>Notable traits for <code><a class=\"struct\" href=\"struct.Drain.html\" title=\"struct typed_generational_arena::Drain\">Drain</a>&lt;'a, T, I, G&gt;</code></h3><pre><code><div class=\"where\">impl&lt;'a, T, I: <a class=\"trait\" href=\"trait.ArenaIndex.html\" title=\"trait typed_generational_arena::ArenaIndex\">ArenaIndex</a>, G: <a class=\"trait\" href=\"trait.FixedGenerationalIndex.html\" title=\"trait typed_generational_arena::FixedGenerationalIndex\">FixedGenerationalIndex</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html\" title=\"trait core::iter::traits::iterator::Iterator\">Iterator</a> for <a class=\"struct\" href=\"struct.Drain.html\" title=\"struct typed_generational_arena::Drain\">Drain</a>&lt;'a, T, I, G&gt;</div><div class=\"where\">    type <a href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html#associatedtype.Item\" class=\"associatedtype\">Item</a> = (<a class=\"struct\" href=\"struct.Index.html\" title=\"struct typed_generational_arena::Index\">Index</a>&lt;T, I, G&gt;, T);</div>","Iter<'_, T, I, G>":"<h3>Notable traits for <code><a class=\"struct\" href=\"struct.Iter.html\" title=\"struct typed_generational_arena::Iter\">Iter</a>&lt;'a, T, I, G&gt;</code></h3><pre><code><div class=\"where\">impl&lt;'a, T, I: 'a + <a class=\"trait\" href=\"trait.ArenaIndex.html\" title=\"trait typed_generational_arena::ArenaIndex\">ArenaIndex</a>, G: 'a + <a class=\"trait\" href=\"trait.FixedGenerationalIndex.html\" title=\"trait typed_generational_arena::FixedGenerationalIndex\">FixedGenerationalIndex</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html\" title=\"trait core::iter::traits::iterator::Iterator\">Iterator</a> for <a class=\"struct\" href=\"struct.Iter.html\" title=\"struct typed_generational_arena::Iter\">Iter</a>&lt;'a, T, I, G&gt;</div><div class=\"where\">    type <a href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html#associatedtype.Item\" class=\"associatedtype\">Item</a> = (<a class=\"struct\" href=\"struct.Index.html\" title=\"struct typed_generational_arena::Index\">Index</a>&lt;T, I, G&gt;, <a class=\"primitive\" href=\"https://doc.rust-lang.org/1.85.0/std/primitive.reference.html\">&amp;'a T</a>);</div>","IterMut<'_, T, I, G>":"<h3>Notable traits for <code><a class=\"struct\" href=\"struct.IterMut.html\" title=\"struct typed_generational_arena::IterMut\">IterMut</a>&lt;'a, T, I, G&gt;</code></h3><pre><code><div class=\"where\">impl&lt;'a, T, I: 'a + <a class=\"trait\" href=\"trait.ArenaIndex.html\" title=\"trait typed_generational_arena::ArenaIndex\">ArenaIndex</a>, G: 'a + <a class=\"trait\" href=\"trait.FixedGenerationalIndex.html\" title=\"trait typed_generational_arena::FixedGenerationalIndex\">FixedGenerationalIndex</a>&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html\" title=\"trait core::iter::traits::iterator::Iterator\">Iterator</a> for <a class=\"struct\" href=\"struct.IterMut.html\" title=\"struct typed_generational_arena::IterMut\">IterMut</a>&lt;'a, T, I, G&gt;</div><div class=\"where\">    type <a href=\"https://doc.rust-lang.org/1.85.0/core/iter/traits/iterator/trait.Iterator.html#associatedtype.Item\" class=\"associatedtype\">Item</a> = (<a class=\"struct\" href=\"struct.Index.html\" title=\"struct typed_generational_arena::Index\">Index</a>&lt;T, I, G&gt;, <a class=\"primitive\" href=\"https://doc.rust-lang.org/1.85.0/std/primitive.reference.html\">&amp;'a mut T</a>);</div>"}</script></section></div></main></body></html>
