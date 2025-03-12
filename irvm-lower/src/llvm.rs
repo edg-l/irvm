@@ -7,7 +7,7 @@ use std::{
 };
 
 use irvm::{
-    block::{BlockIdx, Instruction},
+    block::{BlockIdx, DebugOp, DebugVariable, Instruction},
     common::Location,
     datalayout::DataLayout,
     function::Function,
@@ -178,13 +178,13 @@ pub fn lower_module_to_llvmir(
                 func: func.clone(),
                 builder,
                 dibuilder,
-                dfunc,
                 storage,
                 blocks: Default::default(),
                 values: Default::default(),
                 block_args: Default::default(),
                 functions: Rc::clone(&functions),
                 debug_scope: dfunc,
+                datalayout: &module.data_layout,
             };
 
             for (id, _) in func.blocks.iter() {
@@ -192,7 +192,7 @@ pub fn lower_module_to_llvmir(
             }
 
             for (id, _) in func.blocks.iter() {
-                lower_block(&mut fn_ctx, id);
+                lower_block(&mut fn_ctx, id)?;
             }
 
             debuginfo::LLVMDIBuilderFinalizeSubprogram(dibuilder, dfunc);
@@ -250,17 +250,17 @@ struct FnCtx<'m> {
     storage: &'m TypeStorage,
     builder: LLVMBuilderRef,
     dibuilder: LLVMDIBuilderRef,
-    dfunc: *mut LLVMOpaqueMetadata,
     debug_scope: LLVMMetadataRef,
     functions: Rc<HashMap<usize, (LLVMValueRef, LLVMTypeRef)>>,
     blocks: HashMap<usize, LLVMBasicBlockRef>,
     // block, inst
     values: HashMap<(usize, usize), LLVMValueRef>,
     block_args: HashMap<usize, Vec<LLVMValueRef>>,
+    datalayout: &'m DataLayout,
 }
 
 // Returns the next block to lower.
-fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
+fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
     unsafe {
         let null_name = c"";
         let block_ptr = *ctx.blocks.get(&block_idx.to_idx()).unwrap();
@@ -268,7 +268,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
         add_preds(ctx, block_idx);
 
         for (inst_idx, (loc, inst)) in ctx.func.blocks[block_idx].instructions.iter() {
-            set_loc(ctx.ctx, ctx.builder, loc, ctx.debug_scope);
+            let loc = set_loc(ctx.ctx, ctx.builder, loc, ctx.debug_scope);
 
             match inst {
                 Instruction::BinaryOp(binary_op) => match binary_op {
@@ -594,7 +594,61 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
                     }
                 },
-                Instruction::DebugOp(debug_op) => todo!(),
+                Instruction::DebugOp(debug_op) => match debug_op {
+                    DebugOp::Declare { address, variable } => {
+                        let var = ctx.func.debug_vars.get(*variable).unwrap();
+                        let address_ptr = lower_operand(ctx, address);
+                        let var_ptr = lower_debug_var(
+                            ctx.dibuilder,
+                            ctx.debug_scope,
+                            ctx.datalayout,
+                            var,
+                            ctx.storage,
+                        )?;
+
+                        let diexpr =
+                            debuginfo::LLVMDIBuilderCreateExpression(ctx.dibuilder, null_mut(), 0);
+                        debuginfo::LLVMDIBuilderInsertDeclareRecordAtEnd(
+                            ctx.dibuilder,
+                            address_ptr,
+                            var_ptr,
+                            diexpr,
+                            loc,
+                            block_ptr,
+                        );
+                    }
+                    DebugOp::Value {
+                        new_value,
+                        variable,
+                    } => {
+                        let var = ctx.func.debug_vars.get(*variable).unwrap();
+                        let value_ptr = lower_operand(ctx, new_value);
+                        let var_ptr = lower_debug_var(
+                            ctx.dibuilder,
+                            ctx.debug_scope,
+                            ctx.datalayout,
+                            var,
+                            ctx.storage,
+                        )?;
+
+                        let diexpr =
+                            debuginfo::LLVMDIBuilderCreateExpression(ctx.dibuilder, null_mut(), 0);
+                        debuginfo::LLVMDIBuilderInsertDbgValueRecordAtEnd(
+                            ctx.dibuilder,
+                            value_ptr,
+                            var_ptr,
+                            diexpr,
+                            loc,
+                            block_ptr,
+                        );
+                    }
+                    DebugOp::Assign {
+                        address,
+                        new_value,
+                        store_inst,
+                        variable,
+                    } => todo!(),
+                },
             }
         }
 
@@ -632,6 +686,8 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                 core::LLVMBuildCondBr(ctx.builder, cond, if_block_value, then_block_value);
             }
         }
+
+        Ok(())
     }
 }
 
@@ -649,6 +705,55 @@ fn add_block(ctx: &mut FnCtx, block_idx: BlockIdx, name: Option<String>) -> LLVM
         ctx.blocks.insert(block_idx.to_idx(), block_ptr);
         block_ptr
     }
+}
+
+fn lower_debug_var(
+    dibuilder: LLVMDIBuilderRef,
+    scope: LLVMMetadataRef,
+    datalayout: &DataLayout,
+    variable: &DebugVariable,
+    storage: &TypeStorage,
+) -> Result<LLVMMetadataRef, Error> {
+    let name = CString::new(variable.name.clone())?;
+    let difile = get_difile_location(dibuilder, &variable.location);
+
+    let (line, _col) = match &variable.location {
+        Location::Unknown => (0, 0),
+        Location::File(file_location) => (file_location.line, file_location.col),
+    };
+
+    let ty_ptr = lower_debug_type(datalayout, dibuilder, storage, variable.ty);
+    let align = datalayout.get_type_align(storage, variable.ty);
+
+    Ok(unsafe {
+        if let Some(param) = variable.parameter {
+            debuginfo::LLVMDIBuilderCreateParameterVariable(
+                dibuilder,
+                scope,
+                name.as_ptr(),
+                name.count_bytes(),
+                param,
+                difile,
+                line,
+                ty_ptr,
+                1,
+                0,
+            )
+        } else {
+            debuginfo::LLVMDIBuilderCreateAutoVariable(
+                dibuilder,
+                scope,
+                name.as_ptr(),
+                name.count_bytes(),
+                difile,
+                line,
+                ty_ptr,
+                1,
+                0,
+                align,
+            )
+        }
+    })
 }
 
 fn get_difile_location(dibuilder: LLVMDIBuilderRef, location: &Location) -> LLVMMetadataRef {
@@ -691,11 +796,12 @@ fn set_loc(
     builder: LLVMBuilderRef,
     location: &Location,
     scope: LLVMMetadataRef,
-) {
+) -> *mut LLVMOpaqueMetadata {
     match location {
         Location::Unknown => unsafe {
             let loc = debuginfo::LLVMDIBuilderCreateDebugLocation(ctx, 0, 0, scope, null_mut());
             core::LLVMSetCurrentDebugLocation2(builder, loc);
+            loc
         },
         Location::File(file_location) => unsafe {
             let loc = debuginfo::LLVMDIBuilderCreateDebugLocation(
@@ -706,6 +812,7 @@ fn set_loc(
                 null_mut(),
             );
             core::LLVMSetCurrentDebugLocation2(builder, loc);
+            loc
         },
     }
 }

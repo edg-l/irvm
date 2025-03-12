@@ -53,11 +53,18 @@ mod test {
         {
             let func = module.get_function_mut(main_func);
             let param = func.param(0)?;
+            let param_dbg = func.create_debug_var_param("argv", i32_ty, 0, &Location::Unknown);
             let entry_block = func.entry_block;
 
             let value = func.blocks[entry_block].instr_add(
                 &param,
                 &Operand::const_int(4, i32_ty),
+                Location::Unknown,
+            )?;
+
+            func.blocks[entry_block].instr_dbg_value(
+                value.clone(),
+                param_dbg,
                 Location::Unknown,
             )?;
 

@@ -24,6 +24,7 @@ pub struct Block {
     pub arguments: Vec<TypeIdx>,
     pub instructions: StandardSlab<(Location, Instruction)>,
     pub terminator: Terminator,
+    pub last_instr_idx: Option<InstIdx>,
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +296,7 @@ macro_rules! binop_float {
             }
 
             let result_type = lhs.get_type();
-            let idx = self.instructions.insert((
+            let idx = self.add_instr((
                 location,
                 Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs }),
             ));
@@ -321,7 +322,7 @@ macro_rules! binop_with_overflow_flags {
             }
 
             let result_type = lhs.get_type();
-            let idx = self.instructions.insert((
+            let idx = self.add_instr((
                 location,
                 Instruction::BinaryOp(BinaryOp::$variant {
                     lhs: lhs.clone(),
@@ -350,7 +351,7 @@ macro_rules! binop_with_overflow_flags {
             }
 
             let result_type = lhs.get_type();
-            let idx = self.instructions.insert((
+            let idx = self.add_instr((
                 location,
                 Instruction::BinaryOp(BinaryOp::$variant {
                     lhs: lhs.clone(),
@@ -372,7 +373,16 @@ impl Block {
             terminator: Terminator::Ret((Location::Unknown, None)),
             arguments: arguments.to_vec(),
             id: None,
+            last_instr_idx: None,
         }
+    }
+
+    fn add_instr(&mut self, value: (Location, Instruction)) -> InstIdx {
+        let id = self.instructions.insert(value);
+
+        self.last_instr_idx = Some(id);
+
+        id
     }
 
     pub fn id(&self) -> BlockIdx {
@@ -444,7 +454,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BinaryOp(BinaryOp::Div {
                 lhs: lhs.clone(),
@@ -472,7 +482,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BinaryOp(BinaryOp::Rem { lhs, rhs, signed }),
         ));
@@ -500,7 +510,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Shl { lhs, rhs }),
         ));
@@ -523,7 +533,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Lshr { lhs, rhs, exact }),
         ));
@@ -546,7 +556,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Ashr { lhs, rhs, exact }),
         ));
@@ -568,7 +578,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::And { lhs, rhs }),
         ));
@@ -591,7 +601,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Or { lhs, rhs, disjoint }),
         ));
@@ -613,7 +623,7 @@ impl Block {
         }
 
         let result_type = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::BitwiseBinaryOp(BitwiseBinaryOp::Xor { lhs, rhs }),
         ));
@@ -635,7 +645,7 @@ impl Block {
         } else {
             panic!("invalid pointer type")
         };
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::MemoryOp(MemoryOp::Alloca {
                 ty: inner,
@@ -666,7 +676,7 @@ impl Block {
             panic!("invalid pointer type")
         };
 
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::MemoryOp(MemoryOp::Alloca {
                 ty: inner,
@@ -687,7 +697,7 @@ impl Block {
         ret_ty: TypeIdx,
         location: Location,
     ) -> Result<Operand, Error> {
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::OtherOp(OtherOp::Call(CallOp {
                 tail: false,
@@ -731,7 +741,7 @@ impl Block {
         }
 
         let result_type_idx = lhs.get_type();
-        let idx = self.instructions.insert((
+        let idx = self.add_instr((
             location,
             Instruction::OtherOp(OtherOp::Icmp { cond, lhs, rhs }),
         ));
@@ -746,5 +756,61 @@ impl Block {
                 type_storage.i1_ty.expect("i1 type missing"),
             ))
         }
+    }
+
+    pub fn instr_dbg_declare(
+        &mut self,
+        address: Operand,
+        variable: DebugVarIdx,
+        location: Location,
+    ) -> Result<(), Error> {
+        self.add_instr((
+            location,
+            Instruction::DebugOp(DebugOp::Declare { address, variable }),
+        ));
+
+        Ok(())
+    }
+
+    pub fn instr_dbg_value(
+        &mut self,
+        new_value: Operand,
+        variable: DebugVarIdx,
+        location: Location,
+    ) -> Result<(), Error> {
+        self.add_instr((
+            location,
+            Instruction::DebugOp(DebugOp::Value {
+                new_value,
+                variable,
+            }),
+        ));
+
+        Ok(())
+    }
+
+    pub fn instr_dbg_assign(
+        &mut self,
+        address: Operand,
+        new_value: Operand,
+        variable: DebugVarIdx,
+        store_instr_idx: InstIdx,
+        location: Location,
+    ) -> Result<(), Error> {
+        self.add_instr((
+            location,
+            Instruction::DebugOp(DebugOp::Assign {
+                address,
+                new_value,
+                store_inst: store_instr_idx,
+                variable,
+            }),
+        ));
+
+        Ok(())
+    }
+
+    pub fn get_last_instr_idx(&self) -> Option<InstIdx> {
+        self.last_instr_idx
     }
 }
