@@ -642,12 +642,9 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                             block_ptr,
                         );
                     }
-                    DebugOp::Assign {
-                        address,
-                        new_value,
-                        store_inst,
-                        variable,
-                    } => todo!(),
+                    DebugOp::Assign { .. } => {
+                        todo!()
+                    }
                 },
             }
         }
