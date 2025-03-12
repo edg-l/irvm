@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use typed_generational_arena::StandardSlab;
 
-use crate::{common::Location, module::TypeIdx};
+use crate::module::TypeIdx;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeInfo {
     pub ty: Type,
-    pub location: Location,
     pub debug_name: Option<String>,
 }
 
@@ -87,10 +86,9 @@ impl TypeStorage {
         self.i64_ty
     }
 
-    pub fn add_type(&mut self, ty: Type, location: Location, debug_name: Option<&str>) -> TypeIdx {
+    pub fn add_type(&mut self, ty: Type, debug_name: Option<&str>) -> TypeIdx {
         let id = self.types.insert(TypeInfo {
             ty: ty.clone(),
-            location,
             debug_name: debug_name.map(|x| x.to_string()),
         });
 

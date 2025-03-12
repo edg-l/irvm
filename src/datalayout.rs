@@ -1060,10 +1060,7 @@ impl DataLayout {
 mod test {
     use std::sync::Arc;
 
-    use crate::{
-        common::Location,
-        types::{StructType, Type, TypeStorage},
-    };
+    use crate::types::{StructType, Type, TypeStorage};
 
     use super::DataLayout;
 
@@ -1072,12 +1069,12 @@ mod test {
         let mut storage = TypeStorage::new();
         let datalayout = DataLayout::default();
 
-        let i1_ty = storage.add_type(Type::Int(1), Location::Unknown, None);
-        let i2_ty = storage.add_type(Type::Int(2), Location::Unknown, None);
-        let i4_ty = storage.add_type(Type::Int(4), Location::Unknown, None);
-        let i8_ty = storage.add_type(Type::Int(8), Location::Unknown, None);
-        let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, None);
-        let i64_ty = storage.add_type(Type::Int(64), Location::Unknown, None);
+        let i1_ty = storage.add_type(Type::Int(1), None);
+        let i2_ty = storage.add_type(Type::Int(2), None);
+        let i4_ty = storage.add_type(Type::Int(4), None);
+        let i8_ty = storage.add_type(Type::Int(8), None);
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let i64_ty = storage.add_type(Type::Int(64), None);
         assert_eq!(datalayout.get_type_size(&storage, i1_ty), 8);
         assert_eq!(datalayout.get_type_size(&storage, i2_ty), 8);
         assert_eq!(datalayout.get_type_size(&storage, i4_ty), 8);
@@ -1105,7 +1102,6 @@ mod test {
                 pointee: i32_ty,
                 address_space: None,
             },
-            Location::Unknown,
             None,
         );
 
@@ -1118,7 +1114,6 @@ mod test {
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty],
             })),
-            Location::Unknown,
             None,
         );
 
@@ -1130,7 +1125,6 @@ mod test {
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
             })),
-            Location::Unknown,
             None,
         );
 
@@ -1142,12 +1136,12 @@ mod test {
         let mut type_storage = TypeStorage::new();
         let datalayout = DataLayout::default();
 
-        let i1_ty = type_storage.add_type(Type::Int(1), Location::Unknown, None);
-        let i2_ty = type_storage.add_type(Type::Int(2), Location::Unknown, None);
-        let i4_ty = type_storage.add_type(Type::Int(4), Location::Unknown, None);
-        let i8_ty = type_storage.add_type(Type::Int(8), Location::Unknown, None);
-        let i32_ty = type_storage.add_type(Type::Int(32), Location::Unknown, None);
-        let i64_ty = type_storage.add_type(Type::Int(64), Location::Unknown, None);
+        let i1_ty = type_storage.add_type(Type::Int(1), None);
+        let i2_ty = type_storage.add_type(Type::Int(2), None);
+        let i4_ty = type_storage.add_type(Type::Int(4), None);
+        let i8_ty = type_storage.add_type(Type::Int(8), None);
+        let i32_ty = type_storage.add_type(Type::Int(32), None);
+        let i64_ty = type_storage.add_type(Type::Int(64), None);
 
         assert_eq!(datalayout.get_type_align(&type_storage, i1_ty), 8);
         assert_eq!(datalayout.get_type_align(&type_storage, i2_ty), 8);
@@ -1180,7 +1174,6 @@ mod test {
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty],
             })),
-            Location::Unknown,
             None,
         );
 
@@ -1192,7 +1185,6 @@ mod test {
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
             })),
-            Location::Unknown,
             None,
         );
 

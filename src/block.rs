@@ -3,7 +3,7 @@ use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 use crate::{
     common::{CConv, Location},
     error::Error,
-    function::FnIdx,
+    function::{DebugVarIdx, FnIdx},
     module::TypeIdx,
     types::{FunctionType, Type, TypeStorage},
     value::Operand,
@@ -12,7 +12,7 @@ use crate::{
 pub type BlockIdx = StandardSlabIndex<Block>;
 pub type InstIdx = StandardSlabIndex<(Location, Instruction)>;
 
-/// A Block.
+/// A Block that holds instructions executed in a sequence and a terminator for control flow.
 ///
 /// Terminator default to Ret.
 #[derive(Debug, Clone)]
@@ -33,6 +33,7 @@ pub enum Instruction {
     VectorOp(VectorOp),
     MemoryOp(MemoryOp),
     OtherOp(OtherOp),
+    DebugOp(DebugOp),
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +238,45 @@ pub struct CallReturnAttrs {
     pub signext: bool,
     pub noext: bool,
     pub inreg: bool,
+}
+
+/// A debug operation.
+#[derive(Debug, Clone)]
+pub enum DebugOp {
+    /// Provides information about a local element (e.g., variable).
+    Declare {
+        /// Must be of pointer type. Usually used for variables allocated in a alloca or behind a pointer.
+        address: Operand,
+        variable: DebugVarIdx,
+    },
+    /// Provides information when a user source variable is set to a new value.
+    ///
+    /// Useful for variables whose address can't be taken.
+    Value {
+        new_value: Operand,
+        variable: DebugVarIdx,
+    },
+    /// This marks the position where a source assignment occurred. It encodes the value of the variable.
+    /// It references the store, if any, that performs the assignment, and the destination address.
+    Assign {
+        address: Operand,
+        new_value: Operand,
+        store_inst: InstIdx,
+        variable: DebugVarIdx,
+    },
+}
+
+/// Debug info for a variable.
+#[derive(Debug, Clone)]
+pub struct DebugVariable {
+    /// The name.
+    pub name: String,
+    /// If it's a parameter, the number.
+    pub parameter: Option<u32>,
+    /// The type of the variable.
+    pub ty: TypeIdx,
+    /// The source location.
+    pub location: Location,
 }
 
 macro_rules! binop_float {

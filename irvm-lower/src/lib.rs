@@ -19,15 +19,14 @@ mod test {
     fn test_function_llvm() -> Result<(), Box<dyn Error>> {
         let mut module = Module::new("example", Location::unknown());
         let mut storage = TypeStorage::new();
-        let _bool_ty = storage.add_type(Type::Int(1), Location::Unknown, Some("bool"));
-        let i32_ty = storage.add_type(Type::Int(32), Location::Unknown, Some("i32"));
-        let _i64_ty = storage.add_type(Type::Int(64), Location::Unknown, Some("i64"));
+        let _bool_ty = storage.add_type(Type::Int(1), Some("bool"));
+        let i32_ty = storage.add_type(Type::Int(32), Some("i32"));
+        let _i64_ty = storage.add_type(Type::Int(64), Some("i64"));
         let _ptr_ty = storage.add_type(
             Type::Ptr {
                 pointee: i32_ty,
                 address_space: None,
             },
-            Location::Unknown,
             Some("*i32"),
         );
 

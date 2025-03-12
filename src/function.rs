@@ -1,7 +1,7 @@
 use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
 use crate::{
-    block::{Block, BlockIdx, Terminator},
+    block::{Block, BlockIdx, DebugVariable, Terminator},
     common::{CConv, DllStorageClass, Linkage, Location, Visibility},
     error::Error,
     module::TypeIdx,
@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub type FnIdx = StandardSlabIndex<Function>;
+pub type DebugVarIdx = StandardSlabIndex<DebugVariable>;
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -25,6 +26,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub align: Option<u32>,
     pub location: Location,
+    pub debug_vars: StandardSlab<DebugVariable>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,11 +108,43 @@ impl Function {
             parameters: params.to_vec(),
             align: None,
             location,
+            debug_vars: StandardSlab::new(),
         }
     }
 
     pub fn get_id(&self) -> FnIdx {
         self.id.unwrap()
+    }
+
+    // Creates a debug param variable to be used in debug instructions.
+    pub fn create_debug_var_param(
+        &mut self,
+        name: &str,
+        ty: TypeIdx,
+        nth: usize,
+        location: &Location,
+    ) -> DebugVarIdx {
+        self.debug_vars.insert(DebugVariable {
+            name: name.to_string(),
+            parameter: Some(nth as u32),
+            ty,
+            location: location.clone(),
+        })
+    }
+
+    /// Creates a debug variable to be used in debug instructions.
+    pub fn create_debug_var(
+        &mut self,
+        name: &str,
+        ty: TypeIdx,
+        location: &Location,
+    ) -> DebugVarIdx {
+        self.debug_vars.insert(DebugVariable {
+            name: name.to_string(),
+            parameter: None,
+            ty,
+            location: location.clone(),
+        })
     }
 
     pub fn param(&self, nth: usize) -> Result<Operand, Error> {

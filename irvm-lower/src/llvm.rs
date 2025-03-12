@@ -594,6 +594,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) {
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
                     }
                 },
+                Instruction::DebugOp(debug_op) => todo!(),
             }
         }
 

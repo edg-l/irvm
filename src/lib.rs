@@ -3,7 +3,6 @@
 pub mod block;
 pub mod common;
 pub mod datalayout;
-pub mod debug;
 pub mod error;
 pub mod function;
 pub mod module;
