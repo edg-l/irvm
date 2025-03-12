@@ -40,52 +40,52 @@ pub struct DataLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeLayout {
     Pointer {
-        /// <size> The size of the type (bits).
+        /// The size of the type (bits).
         size: u32,
-        /// <abi> The abi alignment (bits).
+        /// The abi alignment (bits).
         abi: u32,
-        /// <pref> The preferred alignment (bits).
+        /// The preferred alignment (bits).
         prefered: Option<u32>,
-        /// [n]. Only used for pointer types.
+        /// Only used for pointer types.
         address_space: Option<u32>,
         index_size: Option<u32>,
     },
     FunctionPointer {
-        /// True: The alignment of function pointers is independent of the alignment of functions, and is a multiple of <abi>.
+        /// True: The alignment of function pointers is independent of the alignment of functions, and is a multiple of abi.
         ///
-        /// False: The alignment of function pointers is a multiple of the explicit alignment specified on the function, and is a multiple of <abi>.
+        /// False: The alignment of function pointers is a multiple of the explicit alignment specified on the function, and is a multiple of abi.
         align_independent: bool,
-        /// <abi> The abi alignment.
+        /// The abi alignment.
         abi: u32,
     },
     Int {
-        /// <size> The size of the type (bits).
+        /// The size of the type (bits).
         size: u32,
-        /// <abi> The abi alignment (bits).
+        /// The abi alignment (bits).
         abi: u32,
-        /// <pref> The preferred alignment (bits).
+        /// The preferred alignment (bits).
         prefered: Option<u32>,
     },
     Vector {
-        /// <size> The size of the type (bits).
+        /// The size of the type (bits).
         size: u32,
-        /// <abi> The abi alignment (bits).
+        /// The abi alignment (bits).
         abi: u32,
-        /// <pref> The preferred alignment (bits).
+        /// The preferred alignment (bits).
         prefered: Option<u32>,
     },
     Float {
-        /// <size> The size of the type (bits).
+        /// The size of the type (bits).
         size: u32,
-        /// <abi> The abi alignment (bits).
+        /// The abi alignment (bits).
         abi: u32,
-        /// <pref> The preferred alignment (bits).
+        /// The preferred alignment (bits).
         prefered: Option<u32>,
     },
     Aggregate {
-        /// <abi> The abi alignment (bits).
+        /// The abi alignment (bits).
         abi: u32,
-        /// <pref> The preferred alignment (bits).
+        /// The preferred alignment (bits).
         prefered: Option<u32>,
     },
 }

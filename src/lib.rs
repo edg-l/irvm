@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![allow(clippy::too_many_arguments)]
 
 pub mod block;
