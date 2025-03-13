@@ -737,7 +737,6 @@ pub fn create_jit_engine(result: CompileResult) -> Result<JitEngine, Error> {
         static INITIALIZED: OnceLock<()> = OnceLock::new();
         INITIALIZED.get_or_init(|| {
             LLVMLinkInInterpreter();
-            LLVMLinkInMCJIT();
         });
 
         let ok = execution_engine::LLVMCreateExecutionEngineForModule(
