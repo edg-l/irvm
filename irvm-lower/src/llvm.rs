@@ -181,6 +181,8 @@ pub enum JitValue {
 }
 
 impl JitEngine {
+    /// Execute the given function.
+    ///
     /// # Safety
     ///
     /// All arguments and return type must match the signature.
@@ -327,6 +329,7 @@ impl CompileResult {
     }
 }
 
+/// Lowers the given module to llvm ir.
 pub fn lower_module_to_llvmir(
     module: &Module,
     storage: &TypeStorage,
@@ -522,6 +525,8 @@ pub fn lower_module_to_llvmir(
     }
 }
 
+/// Compiles the given llvm compile result to an object or assembly file.
+///
 /// If output assembly is false it will output an object file.
 pub fn compile_object(
     compile_result: &CompileResult,
@@ -689,7 +694,7 @@ pub fn compile_object(
     }
 }
 
-/// Outputs the given result to a file.
+/// Outputs the given compile result to a llvm ir file.
 pub fn output_to_file(compile_result: &CompileResult, output_ll: &Path) -> Result<(), Error> {
     unsafe {
         let file = CString::new(&*output_ll.to_string_lossy())?;
