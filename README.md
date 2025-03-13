@@ -125,7 +125,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // test functin
+    // test function
     {
         let func = module.get_function_mut(test_func);
         let value = func.param(0)?;
