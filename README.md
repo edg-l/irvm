@@ -133,8 +133,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .instr_ret(Some(&value), Location::Unknown);
     }
 
-    lower_module_to_llvmir(&module, &storage, OutputCompilation::Stdout)?;
-
+    let compile_result = lower_module_to_llvmir(&module, &storage)?;
+    compile_result.dump();
     Ok(())
 }
 ```
