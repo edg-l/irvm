@@ -12,7 +12,7 @@ mod test {
         value::Operand,
     };
 
-    use crate::llvm::{Error, JitValue, create_jit_engine, lower_module_to_llvmir};
+    use crate::llvm::{JitValue, create_jit_engine, lower_module_to_llvmir};
 
     #[test]
     fn test_function_llvm() -> Result<(), Box<dyn std::error::Error>> {
@@ -149,7 +149,7 @@ mod test {
         ret_ty: JitValue,
     ) -> Result<JitValue, crate::llvm::Error> {
         let result = lower_module_to_llvmir(module, storage)?;
-        let engine = create_jit_engine(result)?;
+        let engine = create_jit_engine(result, 3)?;
 
         let res = unsafe { engine.execute(name, args, ret_ty)? };
 

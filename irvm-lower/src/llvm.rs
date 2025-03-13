@@ -25,14 +25,15 @@ use llvm_sys::{
     core::{self, LLVMDisposeMessage, LLVMDumpModule},
     debuginfo::{self, LLVMDIFlagPublic, LLVMDWARFEmissionKind},
     error::LLVMGetErrorMessage,
-    execution_engine::{self, LLVMExecutionEngineRef, LLVMLinkInInterpreter, LLVMLinkInMCJIT},
+    execution_engine::{self, LLVMExecutionEngineRef, LLVMLinkInMCJIT},
     prelude::{
         LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef, LLVMMetadataRef,
         LLVMTypeRef, LLVMValueRef,
     },
     target::{
         LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs,
-        LLVM_InitializeAllTargets,
+        LLVM_InitializeAllTargets, LLVM_InitializeNativeAsmParser, LLVM_InitializeNativeAsmPrinter,
+        LLVM_InitializeNativeDisassembler, LLVM_InitializeNativeTarget,
     },
     target_machine::{
         self, LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMDisposeTargetMachine,
@@ -726,7 +727,7 @@ pub fn output_to_file(compile_result: &CompileResult, output_ll: &Path) -> Resul
 }
 
 /// Creates a jit engine for the given compile result.
-pub fn create_jit_engine(result: CompileResult) -> Result<JitEngine, Error> {
+pub fn create_jit_engine(result: CompileResult, optlevel: u32) -> Result<JitEngine, Error> {
     unsafe {
         let mut engine = null_mut();
 
@@ -736,12 +737,17 @@ pub fn create_jit_engine(result: CompileResult) -> Result<JitEngine, Error> {
 
         static INITIALIZED: OnceLock<()> = OnceLock::new();
         INITIALIZED.get_or_init(|| {
-            LLVMLinkInInterpreter();
+            LLVM_InitializeNativeTarget();
+            LLVM_InitializeNativeAsmParser();
+            LLVM_InitializeNativeAsmPrinter();
+            LLVM_InitializeNativeDisassembler();
+            LLVMLinkInMCJIT();
         });
 
-        let ok = execution_engine::LLVMCreateExecutionEngineForModule(
+        let ok = execution_engine::LLVMCreateJITCompilerForModule(
             &raw mut engine,
             result.module,
+            optlevel,
             &raw mut out_msg,
         );
 
