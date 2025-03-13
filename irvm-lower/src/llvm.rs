@@ -1,9 +1,11 @@
 use std::{
     collections::HashMap,
-    ffi::{CStr, CString},
+    ffi::{CStr, CString, c_void},
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     ptr::null_mut,
     rc::Rc,
+    sync::OnceLock,
 };
 
 use irvm::{
@@ -12,39 +14,323 @@ use irvm::{
     datalayout::DataLayout,
     function::Function,
     module::{Module, TypeIdx},
+    target_lexicon::Triple,
     types::{Type, TypeStorage},
     value::{ConstValue, Operand},
 };
 
 use itertools::Itertools;
 use llvm_sys::{
-    LLVMIntPredicate, LLVMOpaqueMetadata, LLVMRealPredicate, core,
+    LLVMIntPredicate, LLVMModule, LLVMOpaqueMetadata, LLVMRealPredicate,
+    core::{self, LLVMDisposeMessage, LLVMDumpModule},
     debuginfo::{self, LLVMDIFlagPublic, LLVMDWARFEmissionKind},
+    error::LLVMGetErrorMessage,
+    execution_engine::{self, LLVMExecutionEngineRef, LLVMLinkInInterpreter, LLVMLinkInMCJIT},
     prelude::{
         LLVMBasicBlockRef, LLVMBuilderRef, LLVMContextRef, LLVMDIBuilderRef, LLVMMetadataRef,
         LLVMTypeRef, LLVMValueRef,
     },
+    target::{
+        LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs,
+        LLVM_InitializeAllTargets,
+    },
+    target_machine::{
+        self, LLVMCodeGenFileType, LLVMCodeGenOptLevel, LLVMCodeModel, LLVMDisposeTargetMachine,
+        LLVMGetHostCPUFeatures, LLVMGetHostCPUName, LLVMRelocMode, LLVMTargetMachineEmitToFile,
+    },
+    transforms::pass_builder::{
+        LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMRunPasses,
+    },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum OutputCompilation {
-    Stdout,
     File(PathBuf),
+    Engine(*mut LLVMExecutionEngineRef),
 }
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum Error {
     #[error("llvm error: {:?}", 0)]
     LLVMError(String),
+    #[error("jit error: {:?}", 0)]
+    JitError(String),
     #[error(transparent)]
     NulError(#[from] std::ffi::NulError),
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TargetCpu {
+    #[default]
+    Host,
+    Name(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TargetCpuFeatures {
+    #[default]
+    Host,
+    Features(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum OptLevel {
+    None,
+    Less,
+    #[default]
+    Default,
+    Aggressive,
+}
+
+/// The relocation model types supported by LLVM
+#[derive(Debug, Clone, Default)]
+pub enum RelocModel {
+    /// Generated code will assume the default for a particular target architecture.
+    #[default]
+    Default,
+    /// Generated code will exist at static offsets.
+    Static,
+    /// Generated code will be position-independent.
+    Pic,
+    /// Generated code will not be position-independent and may be used in static or dynamic executables but not necessarily a shared library.
+    DynamicNoPic,
+    /// Generated code will be compiled in read-only position independent mode.
+    /// In this mode, all read-only data and functions are at a link-time constant offset from the program counter.
+    /// ROPI is not supported by all target architectures and calling conventions. It is a particular feature of ARM targets, though.
+    /// ROPI may be useful to avoid committing to compile-time constant locations for code in memory.
+    Ropi,
+    /// Generated code will be compiled in read-write position independent mode.
+    ///
+    /// In this mode, all writable data is at a link-time constant offset from the static base register.
+    ///
+    /// RWPI is not supported by all target architectures and calling conventions. It is a particular feature of ARM targets, though.
+    ///
+    /// RWPI may be useful to avoid committing to compile-time constant locations for code in memory
+    Rwpi,
+    /// Combines the ropi and rwpi modes. Generated code will be compiled in both read-only and read-write position independent modes.
+    /// All read-only data appears at a link-time constant offset from the program counter,
+    /// and all writable data appears at a link-time constant offset from the static base register.
+    RopiRwpi,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum CodeModel {
+    #[default]
+    Default,
+    JitDefault,
+    Tiny,
+    Small,
+    Kernel,
+    Medium,
+    Large,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompileOptions {
+    pub target_cpu: TargetCpu,
+    pub target_cpu_features: TargetCpuFeatures,
+    pub relocation_model: RelocModel,
+    pub code_model: CodeModel,
+    pub opt_level: u8,
+}
+
+#[derive(Debug)]
+pub struct CompileResult {
+    context: LLVMContextRef,
+    module: *mut LLVMModule,
+}
+
+#[derive(Debug)]
+pub struct JitEngine {
+    context: LLVMContextRef,
+    engine: LLVMExecutionEngineRef,
+}
+
+impl Drop for CompileResult {
+    fn drop(&mut self) {
+        unsafe {
+            core::LLVMDisposeModule(self.module);
+            core::LLVMContextDispose(self.context);
+        }
+    }
+}
+
+impl Drop for JitEngine {
+    fn drop(&mut self) {
+        unsafe {
+            execution_engine::LLVMDisposeExecutionEngine(self.engine);
+            core::LLVMContextDispose(self.context);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum JitValue {
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+    Ptr(*mut c_void),
+    Void,
+}
+
+impl JitEngine {
+    /// # Safety
+    ///
+    /// All arguments and return type must match the signature.
+    pub unsafe fn execute(
+        &self,
+        symbol: &str,
+        args: &[JitValue],
+        return_ty: JitValue,
+    ) -> Result<JitValue, Error> {
+        unsafe {
+            let sym = CString::new(symbol)?;
+            let mut out_fn = null_mut();
+            let ok = execution_engine::LLVMFindFunction(self.engine, sym.as_ptr(), &raw mut out_fn);
+
+            if ok != 0 {
+                return Err(Error::LLVMError("Function not found".to_string()));
+            }
+
+            let mut value_args = Vec::new();
+
+            for arg in args {
+                let value = match arg {
+                    JitValue::U8(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt8Type(),
+                        (*value) as _,
+                        0,
+                    ),
+                    JitValue::U16(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt16Type(),
+                        (*value) as _,
+                        0,
+                    ),
+                    JitValue::U32(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt32Type(),
+                        (*value) as _,
+                        0,
+                    ),
+                    JitValue::U64(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt64Type(),
+                        (*value) as _,
+                        0,
+                    ),
+                    JitValue::I8(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt8Type(),
+                        (*value) as _,
+                        1,
+                    ),
+                    JitValue::I16(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt16Type(),
+                        (*value) as _,
+                        1,
+                    ),
+                    JitValue::I32(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt32Type(),
+                        (*value) as _,
+                        1,
+                    ),
+                    JitValue::I64(value) => execution_engine::LLVMCreateGenericValueOfInt(
+                        core::LLVMInt64Type(),
+                        (*value) as _,
+                        1,
+                    ),
+                    JitValue::F32(value) => execution_engine::LLVMCreateGenericValueOfFloat(
+                        core::LLVMFloatType(),
+                        (*value) as _,
+                    ),
+                    JitValue::F64(value) => execution_engine::LLVMCreateGenericValueOfFloat(
+                        core::LLVMDoubleType(),
+                        (*value) as _,
+                    ),
+                    JitValue::Ptr(value) => {
+                        execution_engine::LLVMCreateGenericValueOfPointer(*value)
+                    }
+                    JitValue::Void => {
+                        return Err(Error::JitError(
+                            "can't use void jit value as argument".to_string(),
+                        ));
+                    }
+                };
+                value_args.push(value);
+            }
+
+            let result = execution_engine::LLVMRunFunction(
+                self.engine,
+                out_fn,
+                value_args.len() as _,
+                value_args.as_mut_ptr(),
+            );
+
+            let res = match return_ty {
+                JitValue::U8(_) => {
+                    JitValue::U8(execution_engine::LLVMGenericValueToInt(result, 0) as u8)
+                }
+                JitValue::U16(_) => {
+                    JitValue::U16(execution_engine::LLVMGenericValueToInt(result, 0) as u16)
+                }
+                JitValue::U32(_) => {
+                    JitValue::U32(execution_engine::LLVMGenericValueToInt(result, 0) as u32)
+                }
+                JitValue::U64(_) => {
+                    JitValue::U64(execution_engine::LLVMGenericValueToInt(result, 0) as u64)
+                }
+                JitValue::I8(_) => {
+                    JitValue::I8(execution_engine::LLVMGenericValueToInt(result, 1) as i8)
+                }
+                JitValue::I16(_) => {
+                    JitValue::I16(execution_engine::LLVMGenericValueToInt(result, 1) as i16)
+                }
+                JitValue::I32(_) => {
+                    JitValue::I32(execution_engine::LLVMGenericValueToInt(result, 1) as i32)
+                }
+                JitValue::I64(_) => {
+                    JitValue::I64(execution_engine::LLVMGenericValueToInt(result, 1) as i64)
+                }
+                JitValue::F32(_) => JitValue::F32(execution_engine::LLVMGenericValueToFloat(
+                    core::LLVMFloatType(),
+                    result,
+                ) as f32),
+                JitValue::F64(_) => JitValue::F64(execution_engine::LLVMGenericValueToFloat(
+                    core::LLVMDoubleType(),
+                    result,
+                ) as f64),
+                JitValue::Ptr(_) => {
+                    JitValue::Ptr(execution_engine::LLVMGenericValueToPointer(result))
+                }
+                JitValue::Void => JitValue::Void,
+            };
+
+            for arg in &value_args {
+                execution_engine::LLVMDisposeGenericValue(*arg);
+            }
+            execution_engine::LLVMDisposeGenericValue(result);
+
+            Ok(res)
+        }
+    }
+}
+
+impl CompileResult {
+    pub fn dump(&self) {
+        unsafe {
+            LLVMDumpModule(self.module);
+        }
+    }
 }
 
 pub fn lower_module_to_llvmir(
     module: &Module,
     storage: &TypeStorage,
-    output: OutputCompilation,
-) -> Result<(), Error> {
+) -> Result<CompileResult, Error> {
     unsafe {
         let ctx = core::LLVMContextCreate();
         let module_name = CString::new(module.name.clone())?;
@@ -198,9 +484,9 @@ pub fn lower_module_to_llvmir(
             debuginfo::LLVMDIBuilderFinalizeSubprogram(dibuilder, dfunc);
         }
 
-        if let OutputCompilation::Stdout = output {
-            core::LLVMDumpModule(llvm_module);
-        }
+        debuginfo::LLVMDIBuilderFinalize(dibuilder);
+        debuginfo::LLVMDisposeDIBuilder(dibuilder);
+        core::LLVMDisposeBuilder(builder);
 
         let mut out_msg: *mut i8 = null_mut();
         let ok = llvm_sys::analysis::LLVMVerifyModule(
@@ -227,19 +513,254 @@ pub fn lower_module_to_llvmir(
 
         if !out_msg.is_null() {
             core::LLVMDisposeMessage(out_msg);
-            out_msg = null_mut();
         }
 
-        if let OutputCompilation::File(file) = output {
-            let file = CString::new(&*file.to_string_lossy())?;
-            core::LLVMPrintModuleToFile(llvm_module, file.as_ptr(), &raw mut out_msg);
-        }
-
-        core::LLVMDisposeModule(llvm_module);
-        core::LLVMContextDispose(ctx);
+        Ok(CompileResult {
+            context: ctx,
+            module: llvm_module,
+        })
     }
+}
 
-    Ok(())
+/// If output assembly is false it will output an object file.
+pub fn compile_object(
+    compile_result: &CompileResult,
+    target_triple: Triple,
+    options: CompileOptions,
+    output_file: &Path,
+    output_assembly: bool,
+) -> Result<(), Error> {
+    unsafe {
+        static INITIALIZED: OnceLock<()> = OnceLock::new();
+        INITIALIZED.get_or_init(|| {
+            LLVM_InitializeAllTargets();
+            LLVM_InitializeAllTargetInfos();
+            LLVM_InitializeAllTargetMCs();
+            LLVM_InitializeAllAsmPrinters();
+        });
+
+        let target_triple = CString::new(target_triple.to_string())?;
+
+        let target_cpu = match &options.target_cpu {
+            TargetCpu::Host => {
+                let cpu = LLVMGetHostCPUName();
+                CString::from(CStr::from_ptr(cpu))
+            }
+            TargetCpu::Name(name) => CString::new(name.as_bytes())?,
+        };
+
+        let target_cpu_features = match &options.target_cpu_features {
+            TargetCpuFeatures::Host => {
+                let cpu = LLVMGetHostCPUFeatures();
+                CString::from(CStr::from_ptr(cpu))
+            }
+            TargetCpuFeatures::Features(name) => CString::new(name.as_bytes())?,
+        };
+
+        let mut out_msg = null_mut();
+
+        let mut target = null_mut();
+
+        let ok = target_machine::LLVMGetTargetFromTriple(
+            target_triple.as_ptr(),
+            &raw mut target,
+            &raw mut out_msg,
+        );
+
+        if ok != 0 {
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            return Err(Error::LLVMError(msg));
+        }
+
+        if !out_msg.is_null() {
+            core::LLVMDisposeMessage(out_msg);
+        }
+
+        let machine = target_machine::LLVMCreateTargetMachine(
+            target,
+            target_triple.as_ptr(),
+            target_cpu.as_ptr(),
+            target_cpu_features.as_ptr(),
+            match options.opt_level {
+                0 => LLVMCodeGenOptLevel::LLVMCodeGenLevelNone,
+                1 => LLVMCodeGenOptLevel::LLVMCodeGenLevelLess,
+                2 => LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
+                _ => LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
+            },
+            match options.relocation_model {
+                RelocModel::Default => LLVMRelocMode::LLVMRelocDefault,
+                RelocModel::Static => LLVMRelocMode::LLVMRelocStatic,
+                RelocModel::Pic => LLVMRelocMode::LLVMRelocPIC,
+                RelocModel::DynamicNoPic => LLVMRelocMode::LLVMRelocDynamicNoPic,
+                RelocModel::Ropi => LLVMRelocMode::LLVMRelocROPI,
+                RelocModel::Rwpi => LLVMRelocMode::LLVMRelocRWPI,
+                RelocModel::RopiRwpi => LLVMRelocMode::LLVMRelocROPI_RWPI,
+            },
+            match options.code_model {
+                CodeModel::Default => LLVMCodeModel::LLVMCodeModelDefault,
+                CodeModel::JitDefault => LLVMCodeModel::LLVMCodeModelJITDefault,
+                CodeModel::Tiny => LLVMCodeModel::LLVMCodeModelTiny,
+                CodeModel::Small => LLVMCodeModel::LLVMCodeModelSmall,
+                CodeModel::Kernel => LLVMCodeModel::LLVMCodeModelKernel,
+                CodeModel::Medium => LLVMCodeModel::LLVMCodeModelMedium,
+                CodeModel::Large => LLVMCodeModel::LLVMCodeModelLarge,
+            },
+        );
+
+        let opts = LLVMCreatePassBuilderOptions();
+
+        let passes = CString::new(format!("default<O{}>", options.opt_level)).unwrap();
+
+        let error = LLVMRunPasses(compile_result.module, passes.as_ptr(), machine, opts);
+
+        if !error.is_null() {
+            let msg_ptr = LLVMGetErrorMessage(error);
+            let msg = {
+                let msg = CStr::from_ptr(msg_ptr);
+                msg.to_string_lossy().to_string()
+            };
+            LLVMDisposeMessage(msg_ptr);
+            LLVMDisposeTargetMachine(machine);
+            return Err(Error::LLVMError(msg));
+        }
+
+        LLVMDisposePassBuilderOptions(opts);
+
+        let mut out_msg: *mut i8 = null_mut();
+        let ok = llvm_sys::analysis::LLVMVerifyModule(
+            compile_result.module,
+            llvm_sys::analysis::LLVMVerifierFailureAction::LLVMReturnStatusAction,
+            &raw mut out_msg,
+        );
+
+        if ok != 0 {
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            LLVMDisposeTargetMachine(machine);
+
+            return Err(Error::LLVMError(msg));
+        }
+
+        let filename = CString::new(output_file.as_os_str().to_string_lossy().as_bytes()).unwrap();
+
+        let ok = LLVMTargetMachineEmitToFile(
+            machine,
+            compile_result.module,
+            filename.as_ptr().cast_mut(),
+            if output_assembly {
+                LLVMCodeGenFileType::LLVMAssemblyFile
+            } else {
+                LLVMCodeGenFileType::LLVMObjectFile
+            },
+            &raw mut out_msg,
+        );
+
+        LLVMDisposeTargetMachine(machine);
+
+        if ok != 0 {
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            return Err(Error::LLVMError(msg));
+        }
+
+        Ok(())
+    }
+}
+
+/// Outputs the given result to a file.
+pub fn output_to_file(compile_result: &CompileResult, output_ll: &Path) -> Result<(), Error> {
+    unsafe {
+        let file = CString::new(&*output_ll.to_string_lossy())?;
+
+        let mut out_msg: *mut i8 = null_mut();
+
+        let ok =
+            core::LLVMPrintModuleToFile(compile_result.module, file.as_ptr(), &raw mut out_msg);
+
+        if ok != 0 {
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            return Err(Error::LLVMError(msg));
+        }
+
+        if !out_msg.is_null() {
+            core::LLVMDisposeMessage(out_msg);
+        }
+
+        Ok(())
+    }
+}
+
+/// Creates a jit engine for the given compile result.
+pub fn create_jit_engine(result: CompileResult) -> Result<JitEngine, Error> {
+    unsafe {
+        let mut engine = null_mut();
+
+        let mut out_msg: *mut i8 = null_mut();
+
+        let result = ManuallyDrop::new(result);
+
+        static INITIALIZED: OnceLock<()> = OnceLock::new();
+        INITIALIZED.get_or_init(|| {
+            LLVMLinkInInterpreter();
+            LLVMLinkInMCJIT();
+        });
+
+        let ok = execution_engine::LLVMCreateExecutionEngineForModule(
+            &raw mut engine,
+            result.module,
+            &raw mut out_msg,
+        );
+
+        if ok != 0 {
+            let msg = {
+                let msg = CStr::from_ptr(out_msg);
+                msg.to_string_lossy().to_string()
+            };
+
+            if !out_msg.is_null() {
+                core::LLVMDisposeMessage(out_msg);
+            }
+
+            return Err(Error::LLVMError(msg));
+        }
+
+        let engine = JitEngine {
+            context: result.context,
+            engine,
+        };
+
+        Ok(engine)
+    }
 }
 
 #[derive(Debug)]

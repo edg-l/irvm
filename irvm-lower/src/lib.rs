@@ -2,7 +2,6 @@ pub mod llvm;
 
 #[cfg(test)]
 mod test {
-    use std::error::Error;
 
     use irvm::{
         block::IcmpCond,
@@ -13,10 +12,10 @@ mod test {
         value::Operand,
     };
 
-    use crate::llvm::lower_module_to_llvmir;
+    use crate::llvm::{Error, JitValue, create_jit_engine, lower_module_to_llvmir};
 
     #[test]
-    fn test_function_llvm() -> Result<(), Box<dyn Error>> {
+    fn test_function_llvm() -> Result<(), Box<dyn std::error::Error>> {
         let mut module = Module::new("example", Location::unknown());
         let mut storage = TypeStorage::new();
         let _bool_ty = storage.add_type(Type::Int(1), Some("bool"));
@@ -122,7 +121,7 @@ mod test {
             }
         }
 
-        // test functin
+        // test function
         {
             let func = module.get_function_mut(test_func);
             let value = func.param(0)?;
@@ -130,8 +129,30 @@ mod test {
                 .instr_ret(Some(&value), Location::Unknown);
         }
 
-        lower_module_to_llvmir(&module, &storage, crate::llvm::OutputCompilation::Stdout)?;
+        let result = test_run_module(
+            &module,
+            &storage,
+            "main",
+            &[JitValue::U32(4)],
+            JitValue::U32(0),
+        )?;
+        assert_eq!(result, JitValue::U32(14));
 
         Ok(())
+    }
+
+    fn test_run_module(
+        module: &Module,
+        storage: &TypeStorage,
+        name: &str,
+        args: &[JitValue],
+        ret_ty: JitValue,
+    ) -> Result<JitValue, crate::llvm::Error> {
+        let result = lower_module_to_llvmir(module, storage)?;
+        let engine = create_jit_engine(result)?;
+
+        let res = unsafe { engine.execute(name, args, ret_ty)? };
+
+        Ok(res)
     }
 }
