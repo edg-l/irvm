@@ -1,9 +1,10 @@
 [package]
 name = "irvm-lower"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
 description = "The lowering library for IRVM to go to LLVM IR"
+repository = "https://github.com/edg-l/irvm"
 keywords = ["llvm", "compiler", "ir", "compiler-target", "llvm-ir"]
 categories = ["compilers"]
 license = "Apache-2.0"

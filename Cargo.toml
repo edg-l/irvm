@@ -1,8 +1,9 @@
 [package]
 name = "irvm"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
+repository = "https://github.com/edg-l/irvm"
 description = "A IR compiler target with a Rust friendly API that lowers to LLVM IR."
 keywords = ["llvm", "compiler", "ir", "compiler-target", "llvm-ir"]
 categories = ["compilers"]
