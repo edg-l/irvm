@@ -1,6 +1,6 @@
 # IRVM
 
-A IR compiler target with a native Rust friendly API that lowers to LLVM IR.
+A IR compiler target with a native Rust friendly API that lowers to LLVM IR (or other targets).
 
 ## How it works
 
