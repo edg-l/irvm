@@ -11,6 +11,6 @@ license = "Apache-2.0"
 
 [dependencies]
 llvm-sys = "191.0.0"
-irvm = { path = "..", version = "0.1.0-alpha.1" }
+irvm = { path = "..", version = "0.1.0-alpha.2" }
 itertools = "0.14.0"
 thiserror = "2.0.12"
