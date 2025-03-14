@@ -37,7 +37,7 @@ impl Module {
         &mut self,
         name: &str,
         params: &[Parameter],
-        ret_ty: TypeIdx,
+        ret_ty: Option<TypeIdx>,
         location: Location,
     ) -> &mut Function {
         let id = self

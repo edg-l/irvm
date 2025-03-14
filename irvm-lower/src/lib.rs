@@ -16,12 +16,14 @@ pub mod llvm;
 #[cfg(test)]
 mod test {
 
+    use std::sync::Arc;
+
     use irvm::{
         block::IcmpCond,
         common::Location,
         function::Parameter,
         module::Module,
-        types::{Type, TypeStorage},
+        types::{DebugTypeInfo, StructType, Type, TypeStorage},
         value::Operand,
     };
 
@@ -32,8 +34,8 @@ mod test {
         let mut module = Module::new("example", Location::unknown());
         let mut storage = TypeStorage::new();
         let _bool_ty = storage.add_type(Type::Int(1), Some("bool"));
-        let i32_ty = storage.add_type(Type::Int(32), Some("i32"));
-        let _i64_ty = storage.add_type(Type::Int(64), Some("i64"));
+        let i32_ty = storage.add_type(Type::Int(32), Some("u32"));
+        let _i64_ty = storage.add_type(Type::Int(64), Some("u64"));
         let _ptr_ty = storage.add_type(
             Type::Ptr {
                 pointee: i32_ty,
@@ -46,7 +48,7 @@ mod test {
             .add_function(
                 "main",
                 &[Parameter::new(i32_ty, Location::Unknown)],
-                i32_ty,
+                Some(i32_ty),
                 Location::Unknown,
             )
             .get_id();
@@ -54,7 +56,7 @@ mod test {
             .add_function(
                 "test",
                 &[Parameter::new(i32_ty, Location::Unknown)],
-                i32_ty,
+                Some(i32_ty),
                 Location::Unknown,
             )
             .get_id();
@@ -127,7 +129,7 @@ mod test {
                 let value = func.blocks[final_block].instr_call(
                     test_func,
                     &[param],
-                    test_func_ret_ty,
+                    test_func_ret_ty.unwrap(),
                     Location::Unknown,
                 )?;
                 func.blocks[final_block].instr_ret(Some(&value), Location::Unknown);
@@ -150,6 +152,60 @@ mod test {
             JitValue::U32(0),
         )?;
         assert_eq!(result, JitValue::U32(14));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("example", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), Some("u32"));
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            Some("*i32"),
+        );
+
+        let strct_type = storage.add_type(
+            Type::Struct(
+                StructType {
+                    packed: false,
+                    ident: None,
+                    fields: vec![ptr_ty, i32_ty],
+                    debug_field_names: vec![
+                        ("ptr".to_string(), Location::unknown()),
+                        ("x".to_string(), Location::unknown()),
+                    ],
+                }
+                .into(),
+            ),
+            Some("hello"),
+        );
+
+        let func = module
+            .add_function(
+                "example",
+                &[
+                    Parameter::new(i32_ty, Location::Unknown),
+                    Parameter::new(strct_type, Location::Unknown),
+                ],
+                None,
+                Location::Unknown,
+            )
+            .get_id();
+
+        let func = module.get_function_mut(func);
+
+        let entry = func.entry_block;
+
+        func.blocks[entry].instr_ret(None, Location::Unknown);
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+
+        ir.dump();
 
         Ok(())
     }

@@ -33,7 +33,7 @@ use std::{
     sync::OnceLock,
 };
 
-use gimli::DW_TAG_reference_type;
+use gimli::{DW_ATE_boolean, DW_ATE_unsigned, DW_TAG_reference_type};
 use irvm::{
     block::{BlockIdx, DebugOp, DebugVariable, Instruction},
     common::Location,
@@ -432,7 +432,11 @@ pub fn lower_module_to_llvmir(
         for (fun_idx, func) in module.functions().iter() {
             let name = CString::new(func.name.as_str()).unwrap();
 
-            let ret_ty = lower_type(ctx, storage, func.result_type);
+            let ret_ty = if let Some(ret_ty) = func.result_type {
+                lower_type(ctx, storage, ret_ty)
+            } else {
+                core::LLVMVoidTypeInContext(ctx)
+            };
             let mut params = func
                 .parameters
                 .iter()
@@ -472,14 +476,6 @@ pub fn lower_module_to_llvmir(
                 debug_param_types.as_mut_ptr(),
                 debug_param_types.len() as u32,
                 0,
-            );
-
-            let _ret_debug_ty = lower_debug_type(
-                &module.data_layout,
-                dibuilder,
-                storage,
-                debug_module,
-                func.result_type,
             );
 
             let di_func = debuginfo::LLVMDIBuilderCreateFunction(
@@ -1593,16 +1589,16 @@ fn lower_debug_type(
         unsafe {
             match &ty.ty {
                 Type::Int(width) => {
-                    let mut encoding = 0x7;
+                    let mut encoding = DW_ATE_unsigned;
                     if *width == 1 {
-                        encoding = 0x2;
+                        encoding = DW_ATE_boolean;
                     }
                     debuginfo::LLVMDIBuilderCreateBasicType(
                         builder,
                         name.as_ptr(),
                         name.count_bytes(),
                         size_in_bits as u64,
-                        encoding,
+                        encoding.0 as u32,
                         LLVMDIFlagPublic,
                     )
                 }

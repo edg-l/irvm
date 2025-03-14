@@ -21,7 +21,7 @@ pub struct Function {
     pub dll_storage: Option<DllStorageClass>,
     pub blocks: StandardSlab<Block>,
     pub entry_block: BlockIdx,
-    pub result_type: TypeIdx,
+    pub result_type: Option<TypeIdx>,
     pub parameters: Vec<Parameter>,
     pub align: Option<u32>,
     pub location: Location,
@@ -88,7 +88,7 @@ impl Function {
     pub(crate) fn new(
         name: &str,
         params: &[Parameter],
-        ret_ty: TypeIdx,
+        ret_ty: Option<TypeIdx>,
         location: Location,
     ) -> Self {
         let mut blocks = StandardSlab::new();

@@ -16,6 +16,8 @@ pub struct TypeInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DebugTypeInfo {
     pub name: String,
+    // If the type is a int, specify if it's signed.
+    pub is_signed: bool,
     // Define the type is a reference (in case the IR type used is a ptr).
     pub is_reference: bool,
     pub is_class: bool,
