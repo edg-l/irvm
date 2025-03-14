@@ -1,5 +1,10 @@
 # IRVM
 
+[![GitHub Action](https://img.shields.io/github/actions/workflow/status/edg-l/irvm/ci.yaml?branch=master&style=flat-square)](https://github.com/edg-l/irvm/actions?query=workflow%3Aci)
+[![Crate](https://img.shields.io/crates/v/irvm.svg?style=flat-square)](https://crates.io/crates/irvm)
+![Crates.io Total Downloads](https://img.shields.io/crates/d/irvm)
+![Crates.io License](https://img.shields.io/crates/l/irvm)
+
 A IR compiler target with a native Rust friendly API that lowers to LLVM IR (or other targets).
 
 ## How it works
