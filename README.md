@@ -1,6 +1,6 @@
 # IRVM
 
-[![GitHub Action](https://img.shields.io/github/actions/workflow/status/edg-l/irvm/ci.yaml?branch=master&style=flat-square)](https://github.com/edg-l/irvm/actions?query=workflow%3Aci)
+[![CI](https://github.com/edg-l/irvm/actions/workflows/ci.yml/badge.svg)](https://github.com/edg-l/irvm/actions/workflows/ci.yml)
 [![Crate](https://img.shields.io/crates/v/irvm.svg?style=flat-square)](https://crates.io/crates/irvm)
 ![Crates.io irvm Total Downloads](https://img.shields.io/crates/d/irvm)
 [![Crate](https://img.shields.io/crates/v/irvm-lower.svg?style=flat-square)](https://crates.io/crates/irvm-lower)
