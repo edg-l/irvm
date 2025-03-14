@@ -1,6 +1,6 @@
 [package]
 name = "irvm-lower"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
 description = "The lowering library for IRVM to go to LLVM IR"
@@ -10,6 +10,6 @@ license = "Apache-2.0"
 
 [dependencies]
 llvm-sys = "191.0.0"
-irvm = { path = "..", version = "0.1.0" }
+irvm = { path = "..", version = "0.1.0-alpha.1" }
 itertools = "0.14.0"
 thiserror = "2.0.12"
