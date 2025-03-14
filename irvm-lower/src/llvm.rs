@@ -33,6 +33,7 @@ use std::{
     sync::OnceLock,
 };
 
+use gimli::DW_TAG_reference_type;
 use irvm::{
     block::{BlockIdx, DebugOp, DebugVariable, Instruction},
     common::Location,
@@ -455,7 +456,13 @@ pub fn lower_module_to_llvmir(
             let mut debug_param_types = Vec::new();
 
             for param in func.parameters.iter() {
-                let ptr = lower_debug_type(&module.data_layout, dibuilder, storage, param.ty);
+                let ptr = lower_debug_type(
+                    &module.data_layout,
+                    dibuilder,
+                    storage,
+                    debug_module,
+                    param.ty,
+                );
                 debug_param_types.push(ptr);
             }
 
@@ -467,8 +474,13 @@ pub fn lower_module_to_llvmir(
                 0,
             );
 
-            let _ret_debug_ty =
-                lower_debug_type(&module.data_layout, dibuilder, storage, func.result_type);
+            let _ret_debug_ty = lower_debug_type(
+                &module.data_layout,
+                dibuilder,
+                storage,
+                debug_module,
+                func.result_type,
+            );
 
             let di_func = debuginfo::LLVMDIBuilderCreateFunction(
                 dibuilder,
@@ -1080,7 +1092,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                                     0,
                                 );
                                 (ptr, fn_ty)
-                            } // todo: how to get fn ty?
+                            }
                         };
 
                         let mut args = call_op
@@ -1208,6 +1220,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                         );
                     }
                     DebugOp::Assign { .. } => {
+                        // TODO: no di assign in llvm sys?
                         todo!()
                     }
                 },
@@ -1284,7 +1297,7 @@ fn lower_debug_var(
         Location::File(file_location) => (file_location.line, file_location.col),
     };
 
-    let ty_ptr = lower_debug_type(datalayout, dibuilder, storage, variable.ty);
+    let ty_ptr = lower_debug_type(datalayout, dibuilder, storage, scope, variable.ty);
     let align = datalayout.get_type_align(storage, variable.ty);
 
     Ok(unsafe {
@@ -1560,11 +1573,10 @@ fn lower_debug_type(
     datalayout: &DataLayout,
     builder: LLVMDIBuilderRef,
     storage: &TypeStorage,
+    module_scope: LLVMMetadataRef,
     type_idx: TypeIdx,
 ) -> LLVMMetadataRef {
     let ty = storage.get_type_info(type_idx);
-
-    let name = CString::new(ty.debug_name.clone().unwrap_or_default()).unwrap();
 
     // 1 == address
     // 2 = boolean
@@ -1576,54 +1588,180 @@ fn lower_debug_type(
     let size_in_bits = datalayout.get_type_size(storage, type_idx);
     let align_in_bits = datalayout.get_type_align(storage, type_idx);
 
-    unsafe {
-        match &ty.ty {
-            Type::Int(width) => {
-                let mut encoding = 0x7;
-                if *width == 1 {
-                    encoding = 0x2;
+    if let Some(debug_info) = &ty.debug_info {
+        let name = CString::new(debug_info.name.clone()).unwrap();
+        unsafe {
+            match &ty.ty {
+                Type::Int(width) => {
+                    let mut encoding = 0x7;
+                    if *width == 1 {
+                        encoding = 0x2;
+                    }
+                    debuginfo::LLVMDIBuilderCreateBasicType(
+                        builder,
+                        name.as_ptr(),
+                        name.count_bytes(),
+                        size_in_bits as u64,
+                        encoding,
+                        LLVMDIFlagPublic,
+                    )
                 }
-                debuginfo::LLVMDIBuilderCreateBasicType(
+                Type::Half
+                | Type::BFloat
+                | Type::Float
+                | Type::Double
+                | Type::Fp128
+                | Type::X86Fp80
+                | Type::PpcFp128 => debuginfo::LLVMDIBuilderCreateBasicType(
                     builder,
                     name.as_ptr(),
                     name.count_bytes(),
                     size_in_bits as u64,
-                    encoding,
+                    0x4,
                     LLVMDIFlagPublic,
-                )
+                ),
+                Type::Ptr {
+                    pointee,
+                    address_space,
+                } => {
+                    let pointee_ptr =
+                        lower_debug_type(datalayout, builder, storage, module_scope, *pointee);
+
+                    if debug_info.is_reference {
+                        debuginfo::LLVMDIBuilderCreateReferenceType(
+                            builder,
+                            DW_TAG_reference_type.0 as u32,
+                            pointee_ptr,
+                        )
+                    } else {
+                        debuginfo::LLVMDIBuilderCreatePointerType(
+                            builder,
+                            pointee_ptr,
+                            size_in_bits as u64,
+                            align_in_bits,
+                            address_space.unwrap_or(0),
+                            name.as_ptr(),
+                            name.count_bytes(),
+                        )
+                    }
+                }
+                Type::Vector(vector_type) => {
+                    let inner_ty_ptr = lower_debug_type(
+                        datalayout,
+                        builder,
+                        storage,
+                        module_scope,
+                        vector_type.ty,
+                    );
+                    let size = datalayout.get_type_size(storage, type_idx);
+                    let align = datalayout.get_type_align(storage, type_idx);
+                    let mut subrange = debuginfo::LLVMDIBuilderGetOrCreateSubrange(
+                        builder,
+                        0,
+                        vector_type.size as i64,
+                    );
+                    debuginfo::LLVMDIBuilderCreateVectorType(
+                        builder,
+                        size as u64,
+                        align,
+                        inner_ty_ptr,
+                        &raw mut subrange,
+                        1,
+                    )
+                }
+                Type::Array(array_type) => {
+                    let inner_ty_ptr =
+                        lower_debug_type(datalayout, builder, storage, module_scope, array_type.ty);
+                    let size = datalayout.get_type_size(storage, type_idx);
+                    let align = datalayout.get_type_align(storage, type_idx);
+                    let mut subrange = debuginfo::LLVMDIBuilderGetOrCreateSubrange(
+                        builder,
+                        0,
+                        array_type.size as i64,
+                    );
+                    debuginfo::LLVMDIBuilderCreateArrayType(
+                        builder,
+                        size as u64,
+                        align,
+                        inner_ty_ptr,
+                        &raw mut subrange,
+                        1,
+                    )
+                }
+                Type::Struct(struct_type) => {
+                    let mut fields = Vec::with_capacity(struct_type.fields.len());
+
+                    let difile = get_difile_location(builder, &debug_info.location);
+                    let line = debug_info.location.get_line();
+
+                    let mut offset = 0;
+                    let mut cur_align = 8;
+
+                    for (i, field) in struct_type.fields.iter().enumerate() {
+                        let field_align = datalayout.get_type_align(storage, *field);
+                        cur_align = cur_align.max(field_align);
+
+                        if offset % field_align != 0 {
+                            let padding = (field_align - (offset % field_align)) % field_align;
+                            offset += padding;
+                        }
+
+                        let field_size = datalayout.get_type_size(storage, *field);
+
+                        let mut ty =
+                            lower_debug_type(datalayout, builder, storage, module_scope, *field);
+
+                        if let Some((field_name, location)) = struct_type.debug_field_names.get(i) {
+                            let name = CString::new(field_name.clone()).unwrap();
+                            let difile = get_difile_location(builder, location);
+                            let line = location.get_line().unwrap_or(0);
+                            let size = datalayout.get_type_size(storage, *field);
+                            let align = datalayout.get_type_align(storage, *field);
+                            ty = debuginfo::LLVMDIBuilderCreateMemberType(
+                                builder,
+                                module_scope,
+                                name.as_ptr(),
+                                name.count_bytes(),
+                                difile,
+                                line,
+                                size as u64,
+                                align,
+                                offset as u64,
+                                0,
+                                ty,
+                            );
+                        }
+
+                        offset += field_size;
+
+                        fields.push(ty);
+                    }
+
+                    let size = datalayout.get_type_size(storage, type_idx);
+                    let align = datalayout.get_type_align(storage, type_idx);
+
+                    debuginfo::LLVMDIBuilderCreateStructType(
+                        builder,
+                        module_scope,
+                        name.as_ptr(),
+                        name.count_bytes(),
+                        difile,
+                        line.unwrap_or(0),
+                        size as u64,
+                        align,
+                        0,
+                        null_mut(),
+                        fields.as_mut_ptr(),
+                        fields.len() as u32,
+                        0,
+                        null_mut(),
+                        name.as_ptr(),
+                        name.count_bytes(),
+                    )
+                }
             }
-            Type::Half
-            | Type::BFloat
-            | Type::Float
-            | Type::Double
-            | Type::Fp128
-            | Type::X86Fp80
-            | Type::PpcFp128 => debuginfo::LLVMDIBuilderCreateBasicType(
-                builder,
-                name.as_ptr(),
-                name.count_bytes(),
-                size_in_bits as u64,
-                0x4,
-                LLVMDIFlagPublic,
-            ),
-            Type::Ptr {
-                pointee,
-                address_space,
-            } => {
-                let pointee_ptr = lower_debug_type(datalayout, builder, storage, *pointee);
-                debuginfo::LLVMDIBuilderCreatePointerType(
-                    builder,
-                    pointee_ptr,
-                    size_in_bits as u64,
-                    align_in_bits,
-                    address_space.unwrap_or(0),
-                    name.as_ptr(),
-                    name.count_bytes(),
-                )
-            }
-            Type::Vector(_vector_type) => todo!(),
-            Type::Array(_array_type) => todo!(),
-            Type::Struct(_struct_type) => todo!(),
         }
+    } else {
+        todo!()
     }
 }

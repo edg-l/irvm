@@ -64,8 +64,9 @@ pub enum RuntimePreemption {
     DsoLocal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Location {
+    #[default]
     Unknown,
     File(FileLocation),
 }
@@ -77,6 +78,13 @@ impl Location {
 
     pub fn file(file: &Path, line: u32, col: u32) -> Self {
         Self::File(FileLocation::new(file, line, col))
+    }
+
+    pub fn get_line(&self) -> Option<u32> {
+        match self {
+            Location::Unknown => None,
+            Location::File(file_location) => Some(file_location.line),
+        }
     }
 }
 

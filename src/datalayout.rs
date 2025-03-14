@@ -481,7 +481,7 @@ impl DataLayout {
             }
             Type::Struct(struct_type) => {
                 let mut size = 0;
-                let mut align = 1;
+                let mut align = 8;
 
                 for field in &struct_type.fields {
                     let field_align = self.get_type_align(storage, *field);
@@ -1110,6 +1110,7 @@ mod test {
                 packed: false,
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty],
+                debug_field_names: Vec::new(),
             })),
             None,
         );
@@ -1121,6 +1122,7 @@ mod test {
                 packed: false,
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
+                debug_field_names: Vec::new(),
             })),
             None,
         );
@@ -1170,6 +1172,7 @@ mod test {
                 packed: false,
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty],
+                debug_field_names: Vec::new(),
             })),
             None,
         );
@@ -1181,6 +1184,7 @@ mod test {
                 packed: false,
                 ident: None,
                 fields: vec![i64_ty, i32_ty, i32_ty, i32_ty],
+                debug_field_names: Vec::new(),
             })),
             None,
         );

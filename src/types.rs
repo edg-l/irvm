@@ -2,12 +2,25 @@ use std::sync::Arc;
 
 use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
+use crate::common::Location;
+
 pub type TypeIdx = StandardSlabIndex<TypeInfo>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeInfo {
     pub ty: Type,
-    pub debug_name: Option<String>,
+    pub debug_info: Option<DebugTypeInfo>,
+}
+
+/// DWARF Debug info for the given type.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DebugTypeInfo {
+    pub name: String,
+    // Define the type is a reference (in case the IR type used is a ptr).
+    pub is_reference: bool,
+    pub is_class: bool,
+    pub class_inherits: Option<TypeIdx>,
+    pub location: Location,
 }
 
 /// First class types
@@ -41,6 +54,7 @@ pub struct StructType {
     pub packed: bool,
     pub ident: Option<String>,
     pub fields: Vec<TypeIdx>,
+    pub debug_field_names: Vec<(String, Location)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,9 +101,19 @@ impl TypeStorage {
     }
 
     pub fn add_type(&mut self, ty: Type, debug_name: Option<&str>) -> TypeIdx {
+        self.add_type_ex(
+            ty,
+            debug_name.map(|name| DebugTypeInfo {
+                name: name.to_string(),
+                ..Default::default()
+            }),
+        )
+    }
+
+    pub fn add_type_ex(&mut self, ty: Type, debug_info: Option<DebugTypeInfo>) -> TypeIdx {
         let id = self.types.insert(TypeInfo {
             ty: ty.clone(),
-            debug_name: debug_name.map(|x| x.to_string()),
+            debug_info,
         });
 
         if let Type::Int(1) = ty {
