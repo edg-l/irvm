@@ -1,7 +1,4 @@
-use crate::{
-    module::TypeIdx,
-    types::{Type, TypeStorage},
-};
+use crate::types::{Type, TypeIdx, TypeStorage};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataLayout {

@@ -1,6 +1,6 @@
 use crate::{
     block::{BlockIdx, InstIdx},
-    module::TypeIdx,
+    types::TypeIdx,
 };
 
 #[derive(Debug, Clone)]

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{block::BlockIdx, module::TypeIdx};
+use crate::{block::BlockIdx, types::TypeIdx};
 
 #[derive(Debug, Clone, Error)]
 pub enum Error {

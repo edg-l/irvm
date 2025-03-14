@@ -4,12 +4,13 @@ use crate::{
     common::{CConv, Location},
     error::Error,
     function::{DebugVarIdx, FnIdx},
-    module::TypeIdx,
-    types::{FunctionType, Type, TypeStorage},
+    types::{FunctionType, Type, TypeIdx, TypeStorage},
     value::Operand,
 };
 
+/// A Block id.
 pub type BlockIdx = StandardSlabIndex<Block>;
+/// An instruction id.
 pub type InstIdx = StandardSlabIndex<(Location, Instruction)>;
 
 /// A Block that holds instructions executed in a sequence and a terminator for control flow.
@@ -21,10 +22,12 @@ pub struct Block {
     // insert the block into the arena to get an id.
     pub(crate) id: Option<BlockIdx>,
     /// Arguments are made to model phi nodes.
-    pub arguments: Vec<TypeIdx>,
-    pub instructions: StandardSlab<(Location, Instruction)>,
-    pub terminator: Terminator,
-    pub last_instr_idx: Option<InstIdx>,
+    arguments: Vec<TypeIdx>,
+    /// The instructions within this block.
+    instructions: StandardSlab<(Location, Instruction)>,
+    /// the terminator of this block
+    terminator: Terminator,
+    last_instr_idx: Option<InstIdx>,
 }
 
 #[derive(Debug, Clone)]
@@ -377,6 +380,16 @@ impl Block {
         }
     }
 
+    /// Get the block terminator.
+    pub fn terminator(&self) -> &Terminator {
+        &self.terminator
+    }
+
+    /// Get the instructions within this block.
+    pub fn instructions(&self) -> &StandardSlab<(Location, Instruction)> {
+        &self.instructions
+    }
+
     fn add_instr(&mut self, value: (Location, Instruction)) -> InstIdx {
         let id = self.instructions.insert(value);
 
@@ -385,10 +398,12 @@ impl Block {
         id
     }
 
+    /// Get the id of the block.
     pub fn id(&self) -> BlockIdx {
         self.id.unwrap()
     }
 
+    /// Get the argument at the given index.
     pub fn arg(&self, nth: usize) -> Result<Operand, Error> {
         self.arguments
             .get(nth)
@@ -403,10 +418,17 @@ impl Block {
             })
     }
 
+    /// Get the block argument type ids.
+    pub fn args(&self) -> &[TypeIdx] {
+        &self.arguments
+    }
+
+    /// Create a return instruction.
     pub fn instr_ret(&mut self, value: Option<&Operand>, location: Location) {
         self.terminator = Terminator::Ret((location, value.cloned()));
     }
 
+    /// Create an unconditional jump/branch instruction.
     pub fn instr_jmp(&mut self, target: BlockIdx, arguments: &[Operand], location: Location) {
         self.terminator = Terminator::Br {
             block: target,
@@ -415,6 +437,7 @@ impl Block {
         };
     }
 
+    /// Add a conditional jump/branch instruction.
     pub fn instr_cond_jmp(
         &mut self,
         then_block: BlockIdx,
@@ -690,6 +713,7 @@ impl Block {
         Ok(Operand::Value(self.id(), idx, pointer_type_idx))
     }
 
+    /// Add a function call instruction.
     pub fn instr_call(
         &mut self,
         fn_idx: FnIdx,

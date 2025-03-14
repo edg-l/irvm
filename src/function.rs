@@ -4,8 +4,7 @@ use crate::{
     block::{Block, BlockIdx, DebugVariable, Terminator},
     common::{CConv, DllStorageClass, Linkage, Location, Visibility},
     error::Error,
-    module::TypeIdx,
-    types::Type,
+    types::{Type, TypeIdx},
     value::Operand,
 };
 
@@ -170,7 +169,7 @@ impl Function {
     pub fn find_preds_for(&self, target_block: BlockIdx) -> Vec<(BlockIdx, Vec<Operand>)> {
         let mut preds = Vec::new();
         for (i, b) in self.blocks.iter() {
-            match &b.terminator {
+            match b.terminator() {
                 Terminator::Ret(_) => {}
                 Terminator::Br {
                     block, arguments, ..

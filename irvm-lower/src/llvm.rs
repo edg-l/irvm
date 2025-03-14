@@ -38,9 +38,9 @@ use irvm::{
     common::Location,
     datalayout::DataLayout,
     function::Function,
-    module::{Module, TypeIdx},
+    module::Module,
     target_lexicon::Triple,
-    types::{Type, TypeStorage},
+    types::{Type, TypeIdx, TypeStorage},
     value::{ConstValue, Operand},
 };
 
@@ -75,6 +75,7 @@ pub enum OutputCompilation {
     Engine(*mut LLVMExecutionEngineRef),
 }
 
+/// A possible Error.
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum Error {
     #[error("llvm error: {:?}", 0)]
@@ -85,6 +86,7 @@ pub enum Error {
     NulError(#[from] std::ffi::NulError),
 }
 
+/// The target LLVM cpu.
 #[derive(Debug, Clone, Default)]
 pub enum TargetCpu {
     #[default]
@@ -92,6 +94,7 @@ pub enum TargetCpu {
     Name(String),
 }
 
+/// The target LLVM cpu features.
 #[derive(Debug, Clone, Default)]
 pub enum TargetCpuFeatures {
     #[default]
@@ -99,6 +102,7 @@ pub enum TargetCpuFeatures {
     Features(String),
 }
 
+/// The optimization level to use.
 #[derive(Debug, Clone, Default)]
 pub enum OptLevel {
     None,
@@ -139,6 +143,7 @@ pub enum RelocModel {
     RopiRwpi,
 }
 
+/// The code model supported by LLVM.
 #[derive(Debug, Clone, Default)]
 pub enum CodeModel {
     #[default]
@@ -151,6 +156,7 @@ pub enum CodeModel {
     Large,
 }
 
+/// Compile options to generate the object file.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
     pub target_cpu: TargetCpu,
@@ -160,12 +166,14 @@ pub struct CompileOptions {
     pub opt_level: u8,
 }
 
+/// A compile result from lowering a given Module.
 #[derive(Debug)]
 pub struct CompileResult {
     context: LLVMContextRef,
     module: *mut LLVMModule,
 }
 
+/// A prepared JIT engine.
 #[derive(Debug)]
 pub struct JitEngine {
     context: LLVMContextRef,
@@ -190,6 +198,7 @@ impl Drop for JitEngine {
     }
 }
 
+/// Possible value/types to pass to the JIT engine execute method.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JitValue {
     U8(u8),
@@ -419,7 +428,7 @@ pub fn lower_module_to_llvmir(
             0,
         );
 
-        for (fun_idx, func) in module.functions.iter() {
+        for (fun_idx, func) in module.functions().iter() {
             let name = CString::new(func.name.as_str()).unwrap();
 
             let ret_ty = lower_type(ctx, storage, func.result_type);
@@ -483,7 +492,7 @@ pub fn lower_module_to_llvmir(
 
         let functions = Rc::new(functions);
 
-        for (fun_idx, func) in module.functions.iter() {
+        for (fun_idx, func) in module.functions().iter() {
             let fn_ptr = functions.get(&fun_idx.to_idx()).unwrap().0;
             let dfunc = *dfunctions.get(&fun_idx.to_idx()).unwrap();
 
@@ -823,7 +832,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
         core::LLVMPositionBuilderAtEnd(ctx.builder, block_ptr);
         add_preds(ctx, block_idx);
 
-        for (inst_idx, (loc, inst)) in ctx.func.blocks[block_idx].instructions.iter() {
+        for (inst_idx, (loc, inst)) in ctx.func.blocks[block_idx].instructions().iter() {
             let loc = set_loc(ctx.ctx, ctx.builder, loc, ctx.debug_scope);
 
             match inst {
@@ -1205,7 +1214,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
             }
         }
 
-        match ctx.func.blocks[block_idx].terminator.clone() {
+        match ctx.func.blocks[block_idx].terminator().clone() {
             irvm::block::Terminator::Ret(op) => {
                 set_loc(ctx.ctx, ctx.builder, &op.0, ctx.debug_scope);
                 if let Some(op) = op.1 {

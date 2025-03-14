@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use typed_generational_arena::StandardSlab;
+use typed_generational_arena::{StandardSlab, StandardSlabIndex};
 
-use crate::module::TypeIdx;
+pub type TypeIdx = StandardSlabIndex<TypeInfo>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeInfo {

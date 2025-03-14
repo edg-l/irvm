@@ -1,22 +1,20 @@
 use target_lexicon::Triple;
-use typed_generational_arena::{StandardSlab, StandardSlabIndex};
+use typed_generational_arena::StandardSlab;
 
 use crate::{
     common::Location,
     datalayout::DataLayout,
     function::{FnIdx, Function, Parameter},
-    types::TypeInfo,
+    types::TypeIdx,
 };
 
-pub type TypeIdx = StandardSlabIndex<TypeInfo>;
-
+/// A module contains all the information about the given compilation unit.
 #[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
     pub data_layout: DataLayout,
     pub target_triple: Triple,
-    pub functions: StandardSlab<Function>,
-    pub types: StandardSlab<TypeInfo>,
+    functions: StandardSlab<Function>,
     pub location: Location,
 }
 
@@ -27,9 +25,12 @@ impl Module {
             data_layout: DataLayout::default_host(),
             target_triple: Triple::host(),
             functions: StandardSlab::new(),
-            types: StandardSlab::new(),
             location,
         }
+    }
+
+    pub fn functions(&self) -> &StandardSlab<Function> {
+        &self.functions
     }
 
     pub fn add_function(
