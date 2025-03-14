@@ -1,3 +1,28 @@
+//! ## LLVM IR lowering
+//!
+//! Lower irvm IR to LLVM IR.
+//!
+//! The main functions to use are [`lower_module_to_llvmir`] which gives you a [`CompileResult`].
+//!
+//! With this result you can either write it to a file (.ll), compile it to an object file
+//! or create a JIT Engine to execute methods (a bit limited currently, useful for testing).
+//!
+//! ```rust,ignore
+//!
+//! // Lower the module.
+//! let result = lower_module_to_llvmir(&mymodule, &my_type_storage)?;
+//!
+//! // Output to a file as a .ll
+//! output_to_file(&result, Path::new("out.ll"))?;
+//!
+//! // Compile to an object file.
+//! compile_object(&result, &mymodule.target_triple, CompileOptions::default(), Path::new("out.o"), false)?;
+//!
+//! // Or create a JIT engine.
+//! let engine = create_jit_engine(result, 3)?;
+//! let res = unsafe { engine.execute("main", &[JitValue::U32(4)], JitValue::U32(0))? };
+//! ```
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_void},

@@ -1,3 +1,16 @@
+//! ## irmv-lower
+//!
+//! Lower irvm IR to other IRs.
+//!
+//! This crates currently only allows you to lower irmv IR to LLVM IR.
+//!
+//! See the [`llvm`] submodule for more information.
+//!
+//! ```bash
+//! cargo add irvm-lower
+//! ```
+//!
+
 pub mod llvm;
 
 #[cfg(test)]
