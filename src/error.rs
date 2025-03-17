@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     block::BlockIdx,
-    types::{Type, TypeIdx, TypeInfo},
+    types::{TypeIdx, TypeInfo},
 };
 
 #[derive(Debug, Clone, Error)]
