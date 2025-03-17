@@ -1,6 +1,7 @@
 use crate::{
     block::{BlockIdx, InstIdx},
-    types::TypeIdx,
+    error::Error,
+    types::{TypeIdx, TypeStorage},
 };
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,28 @@ impl Operand {
             Operand::Value(_, _, ty) => *ty,
             Operand::Constant(_, ty) => *ty,
         }
+    }
+
+    pub fn get_inner_type(&self, storage: &TypeStorage) -> Result<TypeIdx, Error> {
+        let ty = self.get_type();
+        let ty_info = storage.get_type_info(ty);
+
+        let opt = match &ty_info.ty {
+            crate::types::Type::Int(_) => None,
+            crate::types::Type::Half => None,
+            crate::types::Type::BFloat => None,
+            crate::types::Type::Float => None,
+            crate::types::Type::Double => None,
+            crate::types::Type::Fp128 => None,
+            crate::types::Type::X86Fp80 => None,
+            crate::types::Type::PpcFp128 => None,
+            crate::types::Type::Ptr { pointee, .. } => Some(*pointee),
+            crate::types::Type::Vector(vector_type) => Some(vector_type.ty),
+            crate::types::Type::Array(array_type) => Some(array_type.ty),
+            crate::types::Type::Struct(..) => None,
+        };
+
+        opt.ok_or(Error::InnerTypeNotFound)
     }
 
     pub fn const_int(value: u64, ty: TypeIdx) -> Self {

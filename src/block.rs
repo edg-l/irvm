@@ -155,6 +155,22 @@ pub enum VectorOp {
     ExtractElement { vector: Operand, idx: Operand },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AtomicOrdering {
+    Unordered,
+    Monotonic,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst,
+}
+
+#[derive(Debug, Clone)]
+pub enum GepIndex {
+    Const(usize),
+    Value(Operand),
+}
+
 #[derive(Debug, Clone)]
 pub enum MemoryOp {
     Alloca {
@@ -163,6 +179,20 @@ pub enum MemoryOp {
         inalloca: bool,
         align: Option<u32>,
         addr_space: Option<u32>,
+    },
+    Load {
+        ptr: Operand,
+        /// Align in bits.
+        align: Option<u32>,
+    },
+    Store {
+        value: Operand,
+        ptr: Operand,
+        align: Option<u32>,
+    },
+    GetElementPtr {
+        ptr: Operand,
+        indices: Vec<GepIndex>,
     },
 }
 
@@ -711,6 +741,94 @@ impl Block {
         ));
 
         Ok(Operand::Value(self.id(), idx, pointer_type_idx))
+    }
+
+    pub fn instr_load(
+        &mut self,
+        ptr: Operand,
+        align: Option<u32>,
+        location: Location,
+        type_storage: &TypeStorage,
+    ) -> Result<Operand, Error> {
+        let pointer_type = type_storage.get_type_info(ptr.get_type());
+        let inner = if let Type::Ptr { pointee, .. } = pointer_type.ty {
+            pointee
+        } else {
+            return Err(Error::InvalidType {
+                found: pointer_type.clone(),
+                expected: "pointer like".to_string(),
+            });
+        };
+
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::Load { ptr, align }),
+        ));
+
+        Ok(Operand::Value(self.id(), idx, inner))
+    }
+
+    pub fn instr_store(
+        &mut self,
+        ptr: Operand,
+        value: Operand,
+        align: Option<u32>,
+        location: Location,
+        type_storage: &TypeStorage,
+    ) -> Result<(), Error> {
+        let pointer_type = type_storage.get_type_info(ptr.get_type());
+        let inner = if let Type::Ptr { pointee, .. } = pointer_type.ty {
+            pointee
+        } else {
+            return Err(Error::InvalidType {
+                found: pointer_type.clone(),
+                expected: "pointer".to_string(),
+            });
+        };
+
+        if inner != value.get_type() {
+            return Err(Error::TypeMismatch {
+                expected: inner,
+                found: value.get_type(),
+            });
+        }
+
+        self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::Store { value, ptr, align }),
+        ));
+
+        Ok(())
+    }
+
+    pub fn instr_gep(
+        &mut self,
+        ptr: Operand,
+        indices: &[GepIndex],
+        result_type: TypeIdx,
+        location: Location,
+        type_storage: &TypeStorage,
+    ) -> Result<Operand, Error> {
+        let pointer_type = type_storage.get_type_info(ptr.get_type());
+
+        if !matches!(pointer_type.ty, Type::Ptr { .. }) {
+            return Err(Error::InvalidType {
+                found: pointer_type.clone(),
+                expected: "pointer".to_string(),
+            });
+        }
+
+        // TODO: Find result type automatically.
+
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::GetElementPtr {
+                ptr,
+                indices: indices.to_vec(),
+            }),
+        ));
+
+        Ok(Operand::Value(self.id(), idx, result_type))
     }
 
     /// Add a function call instruction.

@@ -1,0 +1,4 @@
+llvm c api notes
+
+
+set metadata https://nest.pijul.com/nuudlman/llvm:main/7OVOGA6QKF5OI.TRF3G

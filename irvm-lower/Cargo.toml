@@ -1,6 +1,6 @@
 [package]
 name = "irvm-lower"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
 description = "The lowering library for IRVM to go to LLVM IR"
@@ -12,7 +12,7 @@ documentation = "https://edg-l.github.io/irvm/irvm_lower/"
 
 [dependencies]
 llvm-sys = "191.0.0"
-irvm = { path = "..", version = "0.1.0-alpha.3" }
+irvm = { path = "..", version = "0.1.0-alpha.4" }
 itertools = "0.14.0"
 thiserror = "2.0.12"
 # Dwarf constants

@@ -85,6 +85,8 @@ pub enum Error {
     JitError(String),
     #[error(transparent)]
     NulError(#[from] std::ffi::NulError),
+    #[error("irvm error: {:?}", 0)]
+    IRVMError(#[from] irvm::error::Error),
 }
 
 /// The target LLVM cpu.
@@ -533,6 +535,8 @@ pub fn lower_module_to_llvmir(
         debuginfo::LLVMDIBuilderFinalize(dibuilder);
         debuginfo::LLVMDisposeDIBuilder(dibuilder);
         core::LLVMDisposeBuilder(builder);
+
+        core::LLVMDumpModule(llvm_module);
 
         let mut out_msg: *mut i8 = null_mut();
         let ok = llvm_sys::analysis::LLVMVerifyModule(
@@ -1049,10 +1053,11 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                     } => {
                         let ty_ptr = lower_type(ctx.ctx, ctx.storage, *ty);
                         let value = if *num_elements > 1 {
-                            let int_ty_ptr =
-                                lower_type(ctx.ctx, ctx.storage, ctx.storage.i64_ty().unwrap());
-                            let const_val =
-                                core::LLVMConstInt(int_ty_ptr, (*num_elements) as u64, 0);
+                            let const_val = core::LLVMConstInt(
+                                core::LLVMInt64TypeInContext(ctx.ctx),
+                                (*num_elements) as u64,
+                                0,
+                            );
                             core::LLVMBuildArrayAlloca(
                                 ctx.builder,
                                 ty_ptr,
@@ -1060,8 +1065,68 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                                 null_name.as_ptr(),
                             )
                         } else {
-                            core::LLVMBuildAlloca(ctx.builder, ty_ptr, null_mut())
+                            core::LLVMBuildAlloca(ctx.builder, ty_ptr, null_name.as_ptr())
                         };
+                        ctx.values
+                            .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
+                    }
+                    irvm::block::MemoryOp::Load { ptr, align } => {
+                        let ptr_val = lower_operand(ctx, ptr);
+                        let ty_ptr =
+                            lower_type(ctx.ctx, ctx.storage, ptr.get_inner_type(ctx.storage)?);
+
+                        let value =
+                            core::LLVMBuildLoad2(ctx.builder, ty_ptr, ptr_val, null_name.as_ptr());
+                        if let Some(align) = align {
+                            core::LLVMSetAlignment(value, *align / 8);
+                        }
+
+                        ctx.values
+                            .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
+                    }
+                    irvm::block::MemoryOp::Store { value, ptr, align } => {
+                        let ptr_val = lower_operand(ctx, ptr);
+                        let value_val = lower_operand(ctx, value);
+
+                        let value = core::LLVMBuildStore(ctx.builder, value_val, ptr_val);
+                        if let Some(align) = align {
+                            core::LLVMSetAlignment(value, *align / 8);
+                        }
+
+                        ctx.values
+                            .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
+                    }
+                    irvm::block::MemoryOp::GetElementPtr { ptr, indices } => {
+                        let ptr_val = lower_operand(ctx, ptr);
+                        let pointee_ty =
+                            lower_type(ctx.ctx, ctx.storage, ptr.get_inner_type(ctx.storage)?);
+
+                        let mut x = Vec::new();
+
+                        for index in indices {
+                            let value = match index {
+                                irvm::block::GepIndex::Const(value) => core::LLVMConstInt(
+                                    core::LLVMInt64TypeInContext(ctx.ctx),
+                                    (*value) as u64,
+                                    0,
+                                ),
+                                irvm::block::GepIndex::Value(operand) => {
+                                    lower_operand(ctx, operand)
+                                }
+                            };
+
+                            x.push(value);
+                        }
+
+                        let value = core::LLVMBuildGEP2(
+                            ctx.builder,
+                            pointee_ty,
+                            ptr_val,
+                            x.as_mut_ptr(),
+                            x.len() as u32,
+                            null_name.as_ptr(),
+                        );
+
                         ctx.values
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
                     }

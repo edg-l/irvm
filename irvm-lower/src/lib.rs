@@ -16,14 +16,12 @@ pub mod llvm;
 #[cfg(test)]
 mod test {
 
-    use std::sync::Arc;
-
     use irvm::{
-        block::IcmpCond,
+        block::{GepIndex, IcmpCond},
         common::Location,
         function::Parameter,
         module::Module,
-        types::{DebugTypeInfo, StructType, Type, TypeStorage},
+        types::{StructType, Type, TypeStorage},
         value::Operand,
     };
 
@@ -166,7 +164,7 @@ mod test {
                 pointee: i32_ty,
                 address_space: None,
             },
-            Some("*i32"),
+            Some("*u32"),
         );
 
         let strct_type = storage.add_type(
@@ -206,6 +204,76 @@ mod test {
         let ir = lower_module_to_llvmir(&module, &storage)?;
 
         ir.dump();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gep() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("gepexample", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), Some("u32"));
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            Some("*u32"),
+        );
+
+        let func = module
+            .add_function(
+                "example",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        let func = module.get_function_mut(func);
+
+        let entry = func.entry_block;
+
+        let param1 = func.param(0)?;
+
+        let ptr_val =
+            func.blocks[entry].instr_alloca(ptr_ty, 4, None, Location::Unknown, &storage)?;
+        let k1 = Operand::const_int(1, i32_ty);
+        func.blocks[entry].instr_store(
+            ptr_val.clone(),
+            k1.clone(),
+            None,
+            Location::Unknown,
+            &storage,
+        )?;
+
+        let ptr_idx1 = func.blocks[entry].instr_gep(
+            ptr_val,
+            &[GepIndex::Const(1)],
+            ptr_ty,
+            Location::Unknown,
+            &storage,
+        )?;
+        func.blocks[entry].instr_store(
+            ptr_idx1.clone(),
+            param1,
+            None,
+            Location::Unknown,
+            &storage,
+        )?;
+
+        let result = func.blocks[entry].instr_load(ptr_idx1, None, Location::Unknown, &storage)?;
+
+        func.blocks[entry].instr_ret(Some(&result), Location::Unknown);
+
+        let result = test_run_module(
+            &module,
+            &storage,
+            "example",
+            &[JitValue::U32(2)],
+            JitValue::U32(0),
+        )?;
+        assert_eq!(result, JitValue::U32(2));
 
         Ok(())
     }
