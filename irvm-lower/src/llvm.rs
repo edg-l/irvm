@@ -1332,7 +1332,7 @@ fn add_block(ctx: &mut FnCtx, block_idx: BlockIdx, name: Option<String>) -> LLVM
         let block_name = CString::new(if block_idx.to_idx() == 0 {
             "entry".to_string()
         } else if let Some(name) = name {
-            format!("bb{}", name)
+            format!("bb{name}")
         } else {
             format!("bb{}", block_idx.to_idx())
         })
