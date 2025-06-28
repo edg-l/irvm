@@ -12,7 +12,7 @@ jobs:
         name: clippy
         runs-on: ubuntu-latest
         env:
-            LLVM_SYS_191_PREFIX: /usr/lib/llvm-19/
+            LLVM_SYS_191_PREFIX: /usr/lib/llvm-20/
         steps:
         - uses: actions/checkout@v4
         - uses: dtolnay/rust-toolchain@stable
@@ -22,11 +22,11 @@ jobs:
         - name: add llvm deb repository
           uses: myci-actions/add-deb-repo@11
           with:
-                repo: deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main
+                repo: deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main
                 repo-name: llvm-repo
                 keys-asc: https://apt.llvm.org/llvm-snapshot.gpg.key
         - name: Install LLVM
-          run: sudo apt-get install llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev
+          run: sudo apt-get install llvm-20 llvm-20-dev llvm-20-runtime clang-20 clang-tools-20 lld-20 libpolly-20-dev
         - name: Clippy
           run: make check
 
@@ -44,7 +44,7 @@ jobs:
         name: test (linux, amd64)
         runs-on: ubuntu-latest
         env:
-            LLVM_SYS_190_PREFIX: /usr/lib/llvm-19/
+            LLVM_SYS_190_PREFIX: /usr/lib/llvm-20/
             RUST_LOG: debug
         steps:
         - uses: actions/checkout@v4
@@ -55,11 +55,11 @@ jobs:
         - name: add llvm deb repository
           uses: myci-actions/add-deb-repo@11
           with:
-            repo: deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main
+            repo: deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main
             repo-name: llvm-repo
             keys-asc: https://apt.llvm.org/llvm-snapshot.gpg.key
         - name: Install LLVM
-          run: sudo apt-get install llvm-19 llvm-19-dev llvm-19-runtime clang-19 clang-tools-19 lld-19 libpolly-19-dev
+          run: sudo apt-get install llvm-20 llvm-20-dev llvm-20-runtime clang-20 clang-tools-20 lld-20 libpolly-20-dev
         - name: Install Link deps
           run: sudo apt-get install libc-dev build-essential
         - name: test
