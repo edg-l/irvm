@@ -1,6 +1,6 @@
 [package]
 name = "irvm"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 edition = "2024"
 authors = ["Edgar Luque <git@edgl.dev>"]
 repository = "https://github.com/edg-l/irvm"
@@ -11,8 +11,8 @@ categories = ["compilers"]
 license = "Apache-2.0"
 
 [dependencies]
-target-lexicon = { version = "0.13.2", features = ["std"] }
-thiserror = "2.0.12"
+target-lexicon = { version = "0.13.4", features = ["std"] }
+thiserror = "2.0.18"
 typed-generational-arena = "0.2.9"
 
 
