@@ -17,4 +17,4 @@ typed-generational-arena = "0.2.9"
 
 
 [workspace]
-members = ["irvm-lower"]
+members = [ "examples/simple","irvm-lower"]
