@@ -1,5 +1,12 @@
-use irvm::{block::IcmpCond, common::Location, function::Parameter, module::Module, types::{Type, TypeStorage}, value::Operand};
-use irvm_lower::llvm::{self, create_jit_engine, lower_module_to_llvmir, JitValue};
+use irvm::{
+    block::IcmpCond,
+    common::Location,
+    function::Parameter,
+    module::Module,
+    types::{Type, TypeStorage},
+    value::Operand,
+};
+use irvm_lower::llvm::{self, JitValue, create_jit_engine, lower_module_to_llvmir};
 
 fn main() -> anyhow::Result<()> {
     let mut module = Module::new("example", Location::unknown());
@@ -123,17 +130,17 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
- fn run_module(
-        module: &Module,
-        storage: &TypeStorage,
-        name: &str,
-        args: &[JitValue],
-        ret_ty: JitValue,
-    ) -> Result<JitValue, llvm::Error> {
-        let result = lower_module_to_llvmir(module, storage)?;
-        let engine = create_jit_engine(result, 3)?;
+fn run_module(
+    module: &Module,
+    storage: &TypeStorage,
+    name: &str,
+    args: &[JitValue],
+    ret_ty: JitValue,
+) -> Result<JitValue, llvm::Error> {
+    let result = lower_module_to_llvmir(module, storage)?;
+    let engine = create_jit_engine(result, 3)?;
 
-        let res = unsafe { engine.execute(name, args, ret_ty)? };
+    let res = unsafe { engine.execute(name, args, ret_ty)? };
 
-        Ok(res)
-    }
+    Ok(res)
+}

@@ -192,6 +192,36 @@ impl Function {
                         preds.push((i, then_args.clone()))
                     }
                 }
+                Terminator::Switch {
+                    default_block,
+                    default_args,
+                    cases,
+                    ..
+                } => {
+                    if default_block == &target_block {
+                        preds.push((i, default_args.clone()));
+                    }
+                    for case in cases {
+                        if &case.block == &target_block {
+                            preds.push((i, case.arguments.clone()));
+                        }
+                    }
+                }
+                Terminator::Invoke {
+                    normal_dest,
+                    normal_args,
+                    unwind_dest,
+                    unwind_args,
+                    ..
+                } => {
+                    if normal_dest == &target_block {
+                        preds.push((i, normal_args.clone()));
+                    }
+                    if unwind_dest == &target_block {
+                        preds.push((i, unwind_args.clone()));
+                    }
+                }
+                Terminator::Resume { .. } | Terminator::Unreachable { .. } => {}
             }
         }
         preds

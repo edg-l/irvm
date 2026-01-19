@@ -1,6 +1,7 @@
 use crate::{
     block::{BlockIdx, InstIdx},
     error::Error,
+    module::GlobalIdx,
     types::{TypeIdx, TypeStorage},
 };
 
@@ -14,6 +15,8 @@ pub enum Operand {
     },
     Value(BlockIdx, InstIdx, TypeIdx),
     Constant(ConstValue, TypeIdx),
+    /// Reference to a global variable (value is a pointer to the global).
+    Global(GlobalIdx, TypeIdx),
 }
 
 impl Operand {
@@ -24,6 +27,7 @@ impl Operand {
             Operand::BlockArgument { ty, .. } => *ty,
             Operand::Value(_, _, ty) => *ty,
             Operand::Constant(_, ty) => *ty,
+            Operand::Global(_, ty) => *ty,
         }
     }
 
@@ -59,6 +63,12 @@ impl Operand {
 
     pub fn const_f64(value: f64, ty: TypeIdx) -> Self {
         Self::Constant(ConstValue::Float(value), ty)
+    }
+
+    /// Create an operand referencing a global variable.
+    /// The type should be a pointer type to the global's type.
+    pub fn global(global_idx: GlobalIdx, ptr_ty: TypeIdx) -> Self {
+        Self::Global(global_idx, ptr_ty)
     }
 }
 

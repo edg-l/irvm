@@ -38,6 +38,55 @@ pub enum Instruction {
     MemoryOp(MemoryOp),
     OtherOp(OtherOp),
     DebugOp(DebugOp),
+    ConversionOp(ConversionOp),
+    AggregateOp(AggregateOp),
+}
+
+/// Type conversion/casting operations.
+#[derive(Debug, Clone)]
+pub enum ConversionOp {
+    /// Truncate integer to smaller type.
+    Trunc { value: Operand, target_ty: TypeIdx },
+    /// Zero extend integer to larger type.
+    ZExt { value: Operand, target_ty: TypeIdx },
+    /// Sign extend integer to larger type.
+    SExt { value: Operand, target_ty: TypeIdx },
+    /// Truncate floating-point to smaller type.
+    FPTrunc { value: Operand, target_ty: TypeIdx },
+    /// Extend floating-point to larger type.
+    FPExt { value: Operand, target_ty: TypeIdx },
+    /// Convert floating-point to unsigned integer.
+    FPToUI { value: Operand, target_ty: TypeIdx },
+    /// Convert floating-point to signed integer.
+    FPToSI { value: Operand, target_ty: TypeIdx },
+    /// Convert unsigned integer to floating-point.
+    UIToFP { value: Operand, target_ty: TypeIdx },
+    /// Convert signed integer to floating-point.
+    SIToFP { value: Operand, target_ty: TypeIdx },
+    /// Convert pointer to integer.
+    PtrToInt { value: Operand, target_ty: TypeIdx },
+    /// Convert integer to pointer.
+    IntToPtr { value: Operand, target_ty: TypeIdx },
+    /// Bitwise reinterpretation (same bit width required).
+    Bitcast { value: Operand, target_ty: TypeIdx },
+    /// Cast pointer to different address space.
+    AddrSpaceCast { value: Operand, target_ty: TypeIdx },
+}
+
+/// Aggregate (struct/array) operations.
+#[derive(Debug, Clone)]
+pub enum AggregateOp {
+    /// Extract a value from an aggregate (struct or array) at the given indices.
+    ExtractValue {
+        aggregate: Operand,
+        indices: Vec<u32>,
+    },
+    /// Insert a value into an aggregate (struct or array) at the given indices.
+    InsertValue {
+        aggregate: Operand,
+        element: Operand,
+        indices: Vec<u32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +105,43 @@ pub enum Terminator {
         then_args: Vec<Operand>,
         location: Location,
     },
+    /// Multi-way branch based on integer value.
+    Switch {
+        value: Operand,
+        default_block: BlockIdx,
+        default_args: Vec<Operand>,
+        cases: Vec<SwitchCase>,
+        location: Location,
+    },
+    /// Call that may throw an exception.
+    Invoke {
+        call: CallOp,
+        normal_dest: BlockIdx,
+        normal_args: Vec<Operand>,
+        unwind_dest: BlockIdx,
+        unwind_args: Vec<Operand>,
+        location: Location,
+    },
+    /// Resume propagation of an exception.
+    Resume {
+        value: Operand,
+        location: Location,
+    },
+    /// Mark code as unreachable.
+    Unreachable {
+        location: Location,
+    },
+}
+
+/// A case in a switch statement.
+#[derive(Debug, Clone)]
+pub struct SwitchCase {
+    /// The constant integer value to match.
+    pub value: u64,
+    /// The target block.
+    pub block: BlockIdx,
+    /// Arguments to pass to the target block.
+    pub arguments: Vec<Operand>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,27 +181,32 @@ pub enum BinaryOp {
     FAdd {
         lhs: Operand,
         rhs: Operand,
-        // todo: fast math flags
+        flags: FastMathFlags,
     },
     FSub {
         lhs: Operand,
         rhs: Operand,
-        // todo: fast math flags
+        flags: FastMathFlags,
     },
     FMul {
         lhs: Operand,
         rhs: Operand,
-        // todo: fast math flags
+        flags: FastMathFlags,
     },
     FDiv {
         lhs: Operand,
         rhs: Operand,
-        // todo: fast math flags
+        flags: FastMathFlags,
     },
     FRem {
         lhs: Operand,
         rhs: Operand,
-        // todo: fast math flags
+        flags: FastMathFlags,
+    },
+    /// Floating-point negation.
+    FNeg {
+        value: Operand,
+        flags: FastMathFlags,
     },
 }
 
@@ -152,7 +243,60 @@ pub enum BitwiseBinaryOp {
 
 #[derive(Debug, Clone)]
 pub enum VectorOp {
+    /// Extract an element from a vector at the given index.
     ExtractElement { vector: Operand, idx: Operand },
+    /// Insert an element into a vector at the given index.
+    InsertElement {
+        vector: Operand,
+        element: Operand,
+        idx: Operand,
+    },
+    /// Shuffle elements from two vectors using a mask.
+    /// Mask values of -1 indicate undef/poison.
+    ShuffleVector {
+        vec1: Operand,
+        vec2: Operand,
+        mask: Vec<i32>,
+    },
+}
+
+/// Fast math flags for floating-point operations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FastMathFlags {
+    /// Assume no NaNs.
+    pub nnan: bool,
+    /// Assume no Infs.
+    pub ninf: bool,
+    /// Allow treating sign of zero as insignificant.
+    pub nsz: bool,
+    /// Allow reciprocal approximations.
+    pub arcp: bool,
+    /// Allow floating-point contraction.
+    pub contract: bool,
+    /// Allow approximations for library functions.
+    pub afn: bool,
+    /// Allow reassociation of operations.
+    pub reassoc: bool,
+}
+
+impl FastMathFlags {
+    /// Create flags with all fast-math optimizations enabled.
+    pub fn fast() -> Self {
+        Self {
+            nnan: true,
+            ninf: true,
+            nsz: true,
+            arcp: true,
+            contract: true,
+            afn: true,
+            reassoc: true,
+        }
+    }
+
+    /// Check if any flag is set.
+    pub fn any(&self) -> bool {
+        self.nnan || self.ninf || self.nsz || self.arcp || self.contract || self.afn || self.reassoc
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -163,6 +307,34 @@ pub enum AtomicOrdering {
     Release,
     AcqRel,
     SeqCst,
+}
+
+/// Atomic read-modify-write operation types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AtomicRMWOp {
+    Xchg,
+    Add,
+    Sub,
+    And,
+    Nand,
+    Or,
+    Xor,
+    Max,
+    Min,
+    UMax,
+    UMin,
+    FAdd,
+    FSub,
+    FMax,
+    FMin,
+}
+
+/// Synchronization scope for atomic operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncScope {
+    SingleThread,
+    #[default]
+    System,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +366,44 @@ pub enum MemoryOp {
         ptr: Operand,
         indices: Vec<GepIndex>,
     },
+    /// Atomic load operation.
+    AtomicLoad {
+        ptr: Operand,
+        ordering: AtomicOrdering,
+        align: Option<u32>,
+        sync_scope: SyncScope,
+    },
+    /// Atomic store operation.
+    AtomicStore {
+        value: Operand,
+        ptr: Operand,
+        ordering: AtomicOrdering,
+        align: Option<u32>,
+        sync_scope: SyncScope,
+    },
+    /// Atomic read-modify-write operation.
+    AtomicRMW {
+        op: AtomicRMWOp,
+        ptr: Operand,
+        value: Operand,
+        ordering: AtomicOrdering,
+        sync_scope: SyncScope,
+    },
+    /// Atomic compare-and-exchange operation.
+    CmpXchg {
+        ptr: Operand,
+        cmp: Operand,
+        new_val: Operand,
+        success_ordering: AtomicOrdering,
+        failure_ordering: AtomicOrdering,
+        weak: bool,
+        sync_scope: SyncScope,
+    },
+    /// Memory fence operation.
+    Fence {
+        ordering: AtomicOrdering,
+        sync_scope: SyncScope,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +419,27 @@ pub enum OtherOp {
         lhs: Operand,
         rhs: Operand,
     },
+    /// Conditional value selection (ternary operator).
+    Select {
+        cond: Operand,
+        true_val: Operand,
+        false_val: Operand,
+    },
+    /// Exception landing pad.
+    LandingPad {
+        result_ty: TypeIdx,
+        cleanup: bool,
+        clauses: Vec<LandingPadClause>,
+    },
+}
+
+/// A clause in a landing pad instruction.
+#[derive(Debug, Clone)]
+pub enum LandingPadClause {
+    /// Catch a specific exception type.
+    Catch(Operand),
+    /// Filter clause (array of type infos).
+    Filter(Vec<Operand>),
 }
 
 #[derive(Debug, Clone)]
@@ -314,11 +545,21 @@ pub struct DebugVariable {
 }
 
 macro_rules! binop_float {
-    ($name:ident, $variant:ident) => {
+    ($name:ident, $name_ex:ident, $variant:ident) => {
         pub fn $name(
             &mut self,
             lhs: Operand,
             rhs: Operand,
+            location: Location,
+        ) -> Result<Operand, Error> {
+            self.$name_ex(lhs, rhs, FastMathFlags::default(), location)
+        }
+
+        pub fn $name_ex(
+            &mut self,
+            lhs: Operand,
+            rhs: Operand,
+            flags: FastMathFlags,
             location: Location,
         ) -> Result<Operand, Error> {
             if lhs.get_type() != rhs.get_type() {
@@ -331,7 +572,7 @@ macro_rules! binop_float {
             let result_type = lhs.get_type();
             let idx = self.add_instr((
                 location,
-                Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs }),
+                Instruction::BinaryOp(BinaryOp::$variant { lhs, rhs, flags }),
             ));
 
             Ok(Operand::Value(self.id(), idx, result_type))
@@ -543,11 +784,31 @@ impl Block {
         Ok(Operand::Value(self.id(), idx, result_type))
     }
 
-    binop_float!(instr_fadd, FAdd);
-    binop_float!(instr_fsub, FSub);
-    binop_float!(instr_fmul, FMul);
-    binop_float!(instr_fdiv, FDiv);
-    binop_float!(instr_frem, FRem);
+    binop_float!(instr_fadd, instr_fadd_ex, FAdd);
+    binop_float!(instr_fsub, instr_fsub_ex, FSub);
+    binop_float!(instr_fmul, instr_fmul_ex, FMul);
+    binop_float!(instr_fdiv, instr_fdiv_ex, FDiv);
+    binop_float!(instr_frem, instr_frem_ex, FRem);
+
+    /// Floating-point negation.
+    pub fn instr_fneg(&mut self, value: Operand, location: Location) -> Result<Operand, Error> {
+        self.instr_fneg_ex(value, FastMathFlags::default(), location)
+    }
+
+    /// Floating-point negation with fast math flags.
+    pub fn instr_fneg_ex(
+        &mut self,
+        value: Operand,
+        flags: FastMathFlags,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let result_type = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::BinaryOp(BinaryOp::FNeg { value, flags }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
 
     pub fn instr_shl(
         &mut self,
@@ -954,5 +1215,473 @@ impl Block {
 
     pub fn get_last_instr_idx(&self) -> Option<InstIdx> {
         self.last_instr_idx
+    }
+
+    // ==================== Conversion/Cast Instructions ====================
+
+    /// Truncate integer to a smaller type.
+    pub fn instr_trunc(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::Trunc { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Zero extend integer to a larger type.
+    pub fn instr_zext(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::ZExt { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Sign extend integer to a larger type.
+    pub fn instr_sext(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::SExt { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Truncate floating-point to a smaller type.
+    pub fn instr_fptrunc(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::FPTrunc { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Extend floating-point to a larger type.
+    pub fn instr_fpext(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::FPExt { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert floating-point to unsigned integer.
+    pub fn instr_fptoui(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::FPToUI { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert floating-point to signed integer.
+    pub fn instr_fptosi(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::FPToSI { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert unsigned integer to floating-point.
+    pub fn instr_uitofp(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::UIToFP { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert signed integer to floating-point.
+    pub fn instr_sitofp(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::SIToFP { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert pointer to integer.
+    pub fn instr_ptrtoint(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::PtrToInt { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Convert integer to pointer.
+    pub fn instr_inttoptr(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::IntToPtr { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Bitcast (reinterpret bits without changing them).
+    pub fn instr_bitcast(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::Bitcast { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    /// Cast pointer to different address space.
+    pub fn instr_addrspacecast(
+        &mut self,
+        value: Operand,
+        target_ty: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::ConversionOp(ConversionOp::AddrSpaceCast { value, target_ty }),
+        ));
+        Ok(Operand::Value(self.id(), idx, target_ty))
+    }
+
+    // ==================== Select Instruction ====================
+
+    /// Conditional value selection (ternary operator).
+    pub fn instr_select(
+        &mut self,
+        cond: Operand,
+        true_val: Operand,
+        false_val: Operand,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        if true_val.get_type() != false_val.get_type() {
+            return Err(Error::TypeMismatch {
+                found: false_val.get_type(),
+                expected: true_val.get_type(),
+            });
+        }
+
+        let result_type = true_val.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Select {
+                cond,
+                true_val,
+                false_val,
+            }),
+        ));
+
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    // ==================== Switch Terminator ====================
+
+    /// Create a switch (multi-way branch) terminator.
+    pub fn instr_switch(
+        &mut self,
+        value: Operand,
+        default_block: BlockIdx,
+        default_args: &[Operand],
+        cases: Vec<SwitchCase>,
+        location: Location,
+    ) {
+        self.terminator = Terminator::Switch {
+            value,
+            default_block,
+            default_args: default_args.to_vec(),
+            cases,
+            location,
+        };
+    }
+
+    // ==================== Vector Operations ====================
+
+    /// Insert an element into a vector.
+    pub fn instr_insertelement(
+        &mut self,
+        vector: Operand,
+        element: Operand,
+        idx: Operand,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let result_type = vector.get_type();
+        let inst_idx = self.add_instr((
+            location,
+            Instruction::VectorOp(VectorOp::InsertElement {
+                vector,
+                element,
+                idx,
+            }),
+        ));
+        Ok(Operand::Value(self.id(), inst_idx, result_type))
+    }
+
+    /// Shuffle elements from two vectors using a mask.
+    pub fn instr_shufflevector(
+        &mut self,
+        vec1: Operand,
+        vec2: Operand,
+        mask: Vec<i32>,
+        result_type: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::VectorOp(VectorOp::ShuffleVector { vec1, vec2, mask }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    // ==================== Aggregate Operations ====================
+
+    /// Extract a value from an aggregate (struct or array).
+    pub fn instr_extractvalue(
+        &mut self,
+        aggregate: Operand,
+        indices: &[u32],
+        result_type: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::AggregateOp(AggregateOp::ExtractValue {
+                aggregate,
+                indices: indices.to_vec(),
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    /// Insert a value into an aggregate (struct or array).
+    pub fn instr_insertvalue(
+        &mut self,
+        aggregate: Operand,
+        element: Operand,
+        indices: &[u32],
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let result_type = aggregate.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::AggregateOp(AggregateOp::InsertValue {
+                aggregate,
+                element,
+                indices: indices.to_vec(),
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    // ==================== Atomic Operations ====================
+
+    /// Atomic load.
+    pub fn instr_atomic_load(
+        &mut self,
+        ptr: Operand,
+        ordering: AtomicOrdering,
+        align: Option<u32>,
+        result_type: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::AtomicLoad {
+                ptr,
+                ordering,
+                align,
+                sync_scope: SyncScope::default(),
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    /// Atomic store.
+    pub fn instr_atomic_store(
+        &mut self,
+        ptr: Operand,
+        value: Operand,
+        ordering: AtomicOrdering,
+        align: Option<u32>,
+        location: Location,
+    ) {
+        self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::AtomicStore {
+                value,
+                ptr,
+                ordering,
+                align,
+                sync_scope: SyncScope::default(),
+            }),
+        ));
+    }
+
+    /// Atomic read-modify-write operation.
+    pub fn instr_atomicrmw(
+        &mut self,
+        op: AtomicRMWOp,
+        ptr: Operand,
+        value: Operand,
+        ordering: AtomicOrdering,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let result_type = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::AtomicRMW {
+                op,
+                ptr,
+                value,
+                ordering,
+                sync_scope: SyncScope::default(),
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    /// Atomic compare-and-exchange.
+    pub fn instr_cmpxchg(
+        &mut self,
+        ptr: Operand,
+        cmp: Operand,
+        new_val: Operand,
+        success_ordering: AtomicOrdering,
+        failure_ordering: AtomicOrdering,
+        weak: bool,
+        result_type: TypeIdx,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::CmpXchg {
+                ptr,
+                cmp,
+                new_val,
+                success_ordering,
+                failure_ordering,
+                weak,
+                sync_scope: SyncScope::default(),
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    /// Memory fence.
+    pub fn instr_fence(&mut self, ordering: AtomicOrdering, location: Location) {
+        self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::Fence {
+                ordering,
+                sync_scope: SyncScope::default(),
+            }),
+        ));
+    }
+
+    // ==================== Exception Handling ====================
+
+    /// Invoke a function that may throw an exception.
+    pub fn instr_invoke(
+        &mut self,
+        call: CallOp,
+        normal_dest: BlockIdx,
+        normal_args: &[Operand],
+        unwind_dest: BlockIdx,
+        unwind_args: &[Operand],
+        location: Location,
+    ) {
+        self.terminator = Terminator::Invoke {
+            call,
+            normal_dest,
+            normal_args: normal_args.to_vec(),
+            unwind_dest,
+            unwind_args: unwind_args.to_vec(),
+            location,
+        };
+    }
+
+    /// Resume propagation of an exception.
+    pub fn instr_resume(&mut self, value: Operand, location: Location) {
+        self.terminator = Terminator::Resume { value, location };
+    }
+
+    /// Mark code as unreachable.
+    pub fn instr_unreachable(&mut self, location: Location) {
+        self.terminator = Terminator::Unreachable { location };
+    }
+
+    /// Landing pad for exception handling.
+    pub fn instr_landingpad(
+        &mut self,
+        result_ty: TypeIdx,
+        cleanup: bool,
+        clauses: Vec<LandingPadClause>,
+        location: Location,
+    ) -> Result<Operand, Error> {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::LandingPad {
+                result_ty,
+                cleanup,
+                clauses,
+            }),
+        ));
+        Ok(Operand::Value(self.id(), idx, result_ty))
     }
 }
