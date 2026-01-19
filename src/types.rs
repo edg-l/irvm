@@ -136,4 +136,23 @@ impl TypeStorage {
     pub fn get_type_info(&self, ty: TypeIdx) -> &TypeInfo {
         &self.types[ty]
     }
+
+    /// Get or create the i1 type (boolean).
+    /// This is useful for icmp which returns i1.
+    pub fn get_or_create_i1(&mut self) -> TypeIdx {
+        if let Some(ty) = self.i1_ty {
+            ty
+        } else {
+            self.add_type(Type::Int(1), None)
+        }
+    }
+
+    /// Get or create the i64 type.
+    pub fn get_or_create_i64(&mut self) -> TypeIdx {
+        if let Some(ty) = self.i64_ty {
+            ty
+        } else {
+            self.add_type(Type::Int(64), None)
+        }
+    }
 }

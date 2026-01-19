@@ -33,7 +33,7 @@ use std::{
     sync::OnceLock,
 };
 
-use gimli::{DW_ATE_boolean, DW_ATE_unsigned, DW_TAG_reference_type};
+use gimli::{DW_ATE_boolean, DW_ATE_float, DW_ATE_unsigned, DW_TAG_reference_type};
 use irvm::{
     block::{
         AtomicOrdering, AtomicRMWOp, BlockIdx, DebugOp, DebugVariable, FastMathFlags, Instruction,
@@ -1471,11 +1471,10 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                                     );
                                     let mut filter_vals: Vec<_> =
                                         operands.iter().map(|o| lower_operand(ctx, o)).collect();
-                                    #[allow(deprecated)]
-                                    let filter_arr = core::LLVMConstArray(
+                                    let filter_arr = core::LLVMConstArray2(
                                         i8_ptr_ty,
                                         filter_vals.as_mut_ptr(),
-                                        filter_vals.len() as u32,
+                                        filter_vals.len() as u64,
                                     );
                                     core::LLVMAddClause(lp, filter_arr);
                                 }
@@ -2324,7 +2323,136 @@ fn lower_debug_type(
             }
         }
     } else {
-        todo!()
+        // No debug info provided - create anonymous debug types
+        unsafe {
+            match &ty.ty {
+                Type::Int(width) => {
+                    let name = CString::new(format!("i{}", width)).unwrap();
+                    let encoding = if *width == 1 {
+                        DW_ATE_boolean
+                    } else {
+                        DW_ATE_unsigned
+                    };
+                    debuginfo::LLVMDIBuilderCreateBasicType(
+                        builder,
+                        name.as_ptr(),
+                        name.count_bytes(),
+                        size_in_bits as u64,
+                        encoding.0 as u32,
+                        LLVMDIFlagPublic,
+                    )
+                }
+                Type::Half
+                | Type::BFloat
+                | Type::Float
+                | Type::Double
+                | Type::Fp128
+                | Type::X86Fp80
+                | Type::PpcFp128 => {
+                    let name = CString::new(format!("f{}", size_in_bits)).unwrap();
+                    debuginfo::LLVMDIBuilderCreateBasicType(
+                        builder,
+                        name.as_ptr(),
+                        name.count_bytes(),
+                        size_in_bits as u64,
+                        DW_ATE_float.0 as u32,
+                        LLVMDIFlagPublic,
+                    )
+                }
+                Type::Ptr {
+                    pointee,
+                    address_space,
+                } => {
+                    let pointee_ptr =
+                        lower_debug_type(datalayout, builder, storage, module_scope, *pointee);
+                    let name = CString::new("ptr").unwrap();
+                    debuginfo::LLVMDIBuilderCreatePointerType(
+                        builder,
+                        pointee_ptr,
+                        size_in_bits as u64,
+                        align_in_bits,
+                        address_space.unwrap_or(0),
+                        name.as_ptr(),
+                        name.count_bytes(),
+                    )
+                }
+                Type::Vector(vector_type) => {
+                    let inner_ty_ptr = lower_debug_type(
+                        datalayout,
+                        builder,
+                        storage,
+                        module_scope,
+                        vector_type.ty,
+                    );
+                    let mut subrange = debuginfo::LLVMDIBuilderGetOrCreateSubrange(
+                        builder,
+                        0,
+                        vector_type.size as i64,
+                    );
+                    debuginfo::LLVMDIBuilderCreateVectorType(
+                        builder,
+                        size_in_bits as u64,
+                        align_in_bits,
+                        inner_ty_ptr,
+                        &raw mut subrange,
+                        1,
+                    )
+                }
+                Type::Array(array_type) => {
+                    let inner_ty_ptr =
+                        lower_debug_type(datalayout, builder, storage, module_scope, array_type.ty);
+                    let mut subrange = debuginfo::LLVMDIBuilderGetOrCreateSubrange(
+                        builder,
+                        0,
+                        array_type.size as i64,
+                    );
+                    debuginfo::LLVMDIBuilderCreateArrayType(
+                        builder,
+                        size_in_bits as u64,
+                        align_in_bits,
+                        inner_ty_ptr,
+                        &raw mut subrange,
+                        1,
+                    )
+                }
+                Type::Struct(struct_type) => {
+                    let mut fields = Vec::with_capacity(struct_type.fields.len());
+                    let mut offset = 0;
+
+                    for field in struct_type.fields.iter() {
+                        let field_align = datalayout.get_type_align(storage, *field);
+                        if offset % field_align != 0 {
+                            offset += (field_align - (offset % field_align)) % field_align;
+                        }
+                        let ty =
+                            lower_debug_type(datalayout, builder, storage, module_scope, *field);
+                        let field_size = datalayout.get_type_size(storage, *field);
+                        offset += field_size;
+                        fields.push(ty);
+                    }
+
+                    let name = CString::new("struct").unwrap();
+                    debuginfo::LLVMDIBuilderCreateStructType(
+                        builder,
+                        module_scope,
+                        name.as_ptr(),
+                        name.count_bytes(),
+                        null_mut(),
+                        0,
+                        size_in_bits as u64,
+                        align_in_bits,
+                        0,
+                        null_mut(),
+                        fields.as_mut_ptr(),
+                        fields.len() as u32,
+                        0,
+                        null_mut(),
+                        name.as_ptr(),
+                        name.count_bytes(),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -2444,46 +2572,35 @@ fn lower_atomic_rmw_op(op: &AtomicRMWOp) -> llvm_sys::LLVMAtomicRMWBinOp {
     }
 }
 
-fn apply_fast_math_flags(_value: LLVMValueRef, flags: &FastMathFlags) {
+fn apply_fast_math_flags(value: LLVMValueRef, flags: &FastMathFlags) {
     if !flags.any() {
         return;
     }
-    // Build the flags bitmask
-    // LLVM fast math flag values from LLVMFastMathFlags enum
-    const LLVM_FAST_MATH_ALLOW_REASSOC: u32 = 1 << 0;
-    const LLVM_FAST_MATH_NO_NANS: u32 = 1 << 1;
-    const LLVM_FAST_MATH_NO_INFS: u32 = 1 << 2;
-    const LLVM_FAST_MATH_NO_SIGNED_ZEROS: u32 = 1 << 3;
-    const LLVM_FAST_MATH_ALLOW_RECIPROCAL: u32 = 1 << 4;
-    const LLVM_FAST_MATH_ALLOW_CONTRACT: u32 = 1 << 5;
-    const LLVM_FAST_MATH_APPROX_FUNC: u32 = 1 << 6;
 
-    let mut llvm_flags = 0u32;
+    let mut llvm_flags = llvm_sys::LLVMFastMathNone;
     if flags.reassoc {
-        llvm_flags |= LLVM_FAST_MATH_ALLOW_REASSOC;
+        llvm_flags |= llvm_sys::LLVMFastMathAllowReassoc;
     }
     if flags.nnan {
-        llvm_flags |= LLVM_FAST_MATH_NO_NANS;
+        llvm_flags |= llvm_sys::LLVMFastMathNoNaNs;
     }
     if flags.ninf {
-        llvm_flags |= LLVM_FAST_MATH_NO_INFS;
+        llvm_flags |= llvm_sys::LLVMFastMathNoInfs;
     }
     if flags.nsz {
-        llvm_flags |= LLVM_FAST_MATH_NO_SIGNED_ZEROS;
+        llvm_flags |= llvm_sys::LLVMFastMathNoSignedZeros;
     }
     if flags.arcp {
-        llvm_flags |= LLVM_FAST_MATH_ALLOW_RECIPROCAL;
+        llvm_flags |= llvm_sys::LLVMFastMathAllowReciprocal;
     }
     if flags.contract {
-        llvm_flags |= LLVM_FAST_MATH_ALLOW_CONTRACT;
+        llvm_flags |= llvm_sys::LLVMFastMathAllowContract;
     }
     if flags.afn {
-        llvm_flags |= LLVM_FAST_MATH_APPROX_FUNC;
+        llvm_flags |= llvm_sys::LLVMFastMathApproxFunc;
     }
 
-    // Note: Fast math flags are computed but LLVM-sys doesn't expose LLVMSetFastMathFlags
-    // in a stable way across versions. The flags are tracked in the IR representation.
-    // When LLVM-sys exposes the API, we can use:
-    // core::LLVMSetFastMathFlags(value, llvm_flags);
-    let _ = llvm_flags;
+    unsafe {
+        core::LLVMSetFastMathFlags(value, llvm_flags);
+    }
 }

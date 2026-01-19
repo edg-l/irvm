@@ -1156,7 +1156,9 @@ impl Block {
             Ok(Operand::Value(
                 self.id(),
                 idx,
-                type_storage.i1_ty.expect("i1 type missing"),
+                type_storage
+                    .i1_ty
+                    .expect("i1 type missing - call storage.get_or_create_i1() first"),
             ))
         }
     }
