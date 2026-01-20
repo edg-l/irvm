@@ -481,6 +481,27 @@ pub fn lower_module_to_llvmir(
             let fn_ty = core::LLVMFunctionType(ret_ty, params.as_mut_ptr(), params.len() as u32, 0);
             let fn_ptr = core::LLVMAddFunction(llvm_module, name.as_ptr(), fn_ty);
             apply_function_attrs(ctx, fn_ptr, &func.attrs);
+            apply_parameter_attrs(ctx, fn_ptr, &func.parameters);
+            apply_return_attrs(ctx, fn_ptr, &func.return_attrs);
+
+            // Set GC name if specified
+            if let Some(gc_name) = &func.gc_name {
+                let gc_cstring = CString::new(gc_name.as_str()).unwrap();
+                core::LLVMSetGC(fn_ptr, gc_cstring.as_ptr());
+            }
+
+            // Set prefix data if specified
+            if let Some((value, ty)) = &func.prefix_data {
+                let llvm_val = lower_global_constant(ctx, storage, value, *ty);
+                core::LLVMSetPrefixData(fn_ptr, llvm_val);
+            }
+
+            // Set prologue data if specified
+            if let Some((value, ty)) = &func.prologue_data {
+                let llvm_val = lower_global_constant(ctx, storage, value, *ty);
+                core::LLVMSetPrologueData(fn_ptr, llvm_val);
+            }
+
             functions.insert(fun_idx.to_idx(), (fn_ptr, fn_ty));
 
             let mut file = compile_unit_file;
@@ -572,7 +593,9 @@ pub fn lower_module_to_llvmir(
         debuginfo::LLVMDisposeDIBuilder(dibuilder);
         core::LLVMDisposeBuilder(builder);
 
-        core::LLVMDumpModule(llvm_module);
+        if std::env::var("IRVM_DUMP_IR").is_ok() {
+            core::LLVMDumpModule(llvm_module);
+        }
 
         let mut out_msg: *mut i8 = null_mut();
         let ok = llvm_sys::analysis::LLVMVerifyModule(
@@ -2694,6 +2717,130 @@ fn apply_function_attrs(
         }
         if attrs.optsize {
             add_attr(b"optsize");
+        }
+    }
+}
+
+/// Apply parameter attributes to an LLVM function.
+fn apply_parameter_attrs(
+    ctx: LLVMContextRef,
+    fn_ptr: LLVMValueRef,
+    params: &[irvm::function::Parameter],
+) {
+    unsafe {
+        for (idx, param) in params.iter().enumerate() {
+            // Parameter indices start at 1 (0 is return value)
+            let param_index = (idx + 1) as u32;
+
+            // Helper to add a boolean attribute
+            let add_attr = |name: &[u8]| {
+                let kind = core::LLVMGetEnumAttributeKindForName(name.as_ptr().cast(), name.len());
+                if kind != 0 {
+                    let attr = core::LLVMCreateEnumAttribute(ctx, kind, 0);
+                    core::LLVMAddAttributeAtIndex(fn_ptr, param_index, attr);
+                }
+            };
+
+            if param.nocapture {
+                add_attr(b"nocapture");
+            }
+            if param.readonly {
+                add_attr(b"readonly");
+            }
+            if param.writeonly {
+                add_attr(b"writeonly");
+            }
+            if param.noalias {
+                add_attr(b"noalias");
+            }
+            if param.noundef {
+                add_attr(b"noundef");
+            }
+            if param.nonnull {
+                add_attr(b"nonnull");
+            }
+            if param.nofree {
+                add_attr(b"nofree");
+            }
+            if param.nest {
+                add_attr(b"nest");
+            }
+            if param.returned {
+                add_attr(b"returned");
+            }
+            if param.inreg {
+                add_attr(b"inreg");
+            }
+            if param.zeroext {
+                add_attr(b"zeroext");
+            }
+            if param.signext {
+                add_attr(b"signext");
+            }
+
+            // Int-valued attribute for dereferenceable
+            if let Some(deref) = param.dereferenceable {
+                let kind = core::LLVMGetEnumAttributeKindForName(
+                    b"dereferenceable".as_ptr().cast(),
+                    b"dereferenceable".len(),
+                );
+                if kind != 0 {
+                    let attr = core::LLVMCreateEnumAttribute(ctx, kind, deref as u64);
+                    core::LLVMAddAttributeAtIndex(fn_ptr, param_index, attr);
+                }
+            }
+
+            // Int-valued attribute for alignment
+            if let Some(align) = param.align {
+                let kind =
+                    core::LLVMGetEnumAttributeKindForName(b"align".as_ptr().cast(), b"align".len());
+                if kind != 0 {
+                    let attr = core::LLVMCreateEnumAttribute(ctx, kind, align as u64);
+                    core::LLVMAddAttributeAtIndex(fn_ptr, param_index, attr);
+                }
+            }
+        }
+    }
+}
+
+/// Apply return value attributes to an LLVM function.
+fn apply_return_attrs(
+    ctx: LLVMContextRef,
+    fn_ptr: LLVMValueRef,
+    attrs: &irvm::function::ReturnAttrs,
+) {
+    // Return attribute index is 0
+    const RETURN_INDEX: u32 = 0;
+
+    unsafe {
+        let add_attr = |name: &[u8]| {
+            let kind = core::LLVMGetEnumAttributeKindForName(name.as_ptr().cast(), name.len());
+            if kind != 0 {
+                let attr = core::LLVMCreateEnumAttribute(ctx, kind, 0);
+                core::LLVMAddAttributeAtIndex(fn_ptr, RETURN_INDEX, attr);
+            }
+        };
+
+        if attrs.noalias {
+            add_attr(b"noalias");
+        }
+        if attrs.noundef {
+            add_attr(b"noundef");
+        }
+        if attrs.nonnull {
+            add_attr(b"nonnull");
+        }
+
+        // Int-valued attribute for dereferenceable
+        if let Some(deref) = attrs.dereferenceable {
+            let kind = core::LLVMGetEnumAttributeKindForName(
+                b"dereferenceable".as_ptr().cast(),
+                b"dereferenceable".len(),
+            );
+            if kind != 0 {
+                let attr = core::LLVMCreateEnumAttribute(ctx, kind, deref as u64);
+                core::LLVMAddAttributeAtIndex(fn_ptr, RETURN_INDEX, attr);
+            }
         }
     }
 }

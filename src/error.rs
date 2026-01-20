@@ -19,4 +19,6 @@ pub enum Error {
     InvalidType { found: TypeInfo, expected: String },
     #[error("GEP type error: {0}")]
     GepTypeError(String),
+    #[error("invalid alignment: {reason}")]
+    InvalidAlignment { reason: String },
 }

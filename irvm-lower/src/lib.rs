@@ -27,6 +27,13 @@ mod test {
 
     use crate::llvm::{JitValue, create_jit_engine, lower_module_to_llvmir};
 
+    /// Conditionally dump IR based on IRVM_DUMP_IR env var
+    fn maybe_dump_ir(ir: &crate::llvm::CompileResult) {
+        if std::env::var("IRVM_DUMP_IR").is_ok() {
+            ir.dump();
+        }
+    }
+
     #[test]
     fn test_function_llvm() -> Result<(), Box<dyn std::error::Error>> {
         let mut module = Module::new("example", Location::unknown());
@@ -203,7 +210,7 @@ mod test {
 
         let ir = lower_module_to_llvmir(&module, &storage)?;
 
-        ir.dump();
+        maybe_dump_ir(&ir);
 
         Ok(())
     }
@@ -286,6 +293,7 @@ mod test {
         ret_ty: JitValue,
     ) -> Result<JitValue, crate::llvm::Error> {
         let result = lower_module_to_llvmir(module, storage)?;
+        maybe_dump_ir(&result);
         let engine = create_jit_engine(result, 3)?;
 
         let res = unsafe { engine.execute(name, args, ret_ty)? };
@@ -693,6 +701,480 @@ mod test {
             JitValue::U32(0),
         )?;
         assert_eq!(result, JitValue::U32(123));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_param_attrs() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::function::ReturnAttrs;
+
+        let mut module = Module::new("param_attrs", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            None,
+        );
+
+        // Create a function with various parameter attributes
+        let mut param1 = Parameter::new(ptr_ty, Location::Unknown);
+        param1.nocapture = true;
+        param1.readonly = true;
+        param1.nonnull = true;
+        param1.dereferenceable = Some(4);
+
+        let mut param2 = Parameter::new(i32_ty, Location::Unknown);
+        param2.noundef = true;
+        param2.zeroext = true;
+
+        // Test function with pointer return type (for noalias return attr)
+        let func = module
+            .add_function(
+                "test_attrs",
+                &[param1, param2],
+                Some(ptr_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        // Set return attributes (noalias is only valid for pointer return types)
+        {
+            let func = module.get_function_mut(func);
+            func.return_attrs = ReturnAttrs {
+                noalias: true,
+                noundef: true,
+                nonnull: true,
+                dereferenceable: Some(4),
+            };
+
+            // Simple function body - return the pointer parameter
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        // Also test a function with integer return type and noundef
+        // Note: noalias is only valid for pointer types
+        let mut param3 = Parameter::new(ptr_ty, Location::Unknown);
+        param3.noalias = true; // Valid because it's a pointer
+        param3.writeonly = true;
+
+        let func2 = module
+            .add_function("test_attrs2", &[param3], Some(i32_ty), Location::Unknown)
+            .get_id();
+
+        {
+            let func2 = module.get_function_mut(func2);
+            func2.return_attrs = ReturnAttrs {
+                noalias: false, // Can't use noalias on non-pointer return
+                noundef: true,
+                nonnull: false,
+                dereferenceable: None,
+            };
+            // Load a value from the pointer and return it
+            let param = func2.param(0)?;
+            let loaded =
+                func2
+                    .entry_block()
+                    .instr_load(param, None, Location::Unknown, &storage)?;
+            func2
+                .entry_block()
+                .instr_ret(Some(&loaded), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        // If we get here without errors, the attributes were successfully applied
+        Ok(())
+    }
+
+    #[test]
+    fn test_gc_name() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("gc_test", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        let func = module
+            .add_function(
+                "gc_func",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            func.gc_name = Some("shadow-stack".to_string());
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        // If we get here without errors, the GC name was successfully set
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_data() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::value::ConstValue;
+
+        let mut module = Module::new("prefix_test", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        let func = module
+            .add_function(
+                "prefix_func",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Set prefix data to a constant integer
+            func.prefix_data = Some((ConstValue::Int(0xDEADBEEF), i32_ty));
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        // If we get here without errors, the prefix data was successfully set
+        Ok(())
+    }
+
+    #[test]
+    fn test_prologue_data() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::value::ConstValue;
+
+        let mut module = Module::new("prologue_test", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        let func = module
+            .add_function(
+                "prologue_func",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Set prologue data to a constant integer
+            func.prologue_data = Some((ConstValue::Int(0xCAFEBABE), i32_ty));
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        // If we get here without errors, the prologue data was successfully set
+        Ok(())
+    }
+
+    #[test]
+    fn test_combined_function_and_param_attrs() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::function::{FunctionAttrs, ReturnAttrs};
+
+        let mut module = Module::new("combined_attrs", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            None,
+        );
+
+        // Create a function with both function-level and parameter-level attributes
+        let mut param = Parameter::new(ptr_ty, Location::Unknown);
+        param.nocapture = true;
+        param.readonly = true;
+
+        let func = module
+            .add_function("combined", &[param], Some(ptr_ty), Location::Unknown)
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Set function-level attributes (only use valid function attrs)
+            func.attrs = FunctionAttrs {
+                nounwind: true,
+                willreturn: true,
+                norecurse: true,
+                ..Default::default()
+            };
+            // Set return attributes
+            func.return_attrs = ReturnAttrs {
+                noalias: true,
+                nonnull: true,
+                ..Default::default()
+            };
+
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_param_alignment() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("param_align", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            None,
+        );
+
+        // Create a function with aligned parameter
+        let mut param = Parameter::new(ptr_ty, Location::Unknown);
+        param.align = Some(16); // 16-byte alignment
+
+        let func = module
+            .add_function("aligned_param", &[param], Some(i32_ty), Location::Unknown)
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            let param = func.param(0)?;
+            let loaded = func
+                .entry_block()
+                .instr_load(param, None, Location::Unknown, &storage)?;
+            func.entry_block()
+                .instr_ret(Some(&loaded), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signext_zeroext_param_attrs() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("ext_attrs", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i8_ty = storage.add_type(Type::Int(8), None);
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        // Function with signext parameter
+        let mut param1 = Parameter::new(i8_ty, Location::Unknown);
+        param1.signext = true;
+
+        // Function with zeroext parameter
+        let mut param2 = Parameter::new(i8_ty, Location::Unknown);
+        param2.zeroext = true;
+
+        let func = module
+            .add_function(
+                "test_ext",
+                &[param1, param2],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Extend both params to i32 and add them
+            let p1 = func.param(0)?;
+            let p2 = func.param(1)?;
+            let p1_ext = func
+                .entry_block()
+                .instr_sext(p1, i32_ty, Location::Unknown)?;
+            let p2_ext = func
+                .entry_block()
+                .instr_zext(p2, i32_ty, Location::Unknown)?;
+            let result = func
+                .entry_block()
+                .instr_add(&p1_ext, &p2_ext, Location::Unknown)?;
+            func.entry_block()
+                .instr_ret(Some(&result), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_inreg_returned_nest_attrs() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("misc_attrs", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            None,
+        );
+
+        // Test inreg attribute
+        let mut param1 = Parameter::new(i32_ty, Location::Unknown);
+        param1.inreg = true;
+
+        // Test returned attribute (pointer that is returned)
+        let mut param2 = Parameter::new(ptr_ty, Location::Unknown);
+        param2.returned = true;
+
+        // Test nest attribute (for nested function context pointer)
+        let mut param3 = Parameter::new(ptr_ty, Location::Unknown);
+        param3.nest = true;
+
+        let func = module
+            .add_function(
+                "misc_attrs",
+                &[param1, param2, param3],
+                Some(ptr_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Return the 'returned' parameter
+            let param = func.param(1)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nofree_param_attr() -> Result<(), Box<dyn std::error::Error>> {
+        let mut module = Module::new("nofree_test", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+        let ptr_ty = storage.add_type(
+            Type::Ptr {
+                pointee: i32_ty,
+                address_space: None,
+            },
+            None,
+        );
+
+        // nofree attribute indicates the function won't free this pointer
+        let mut param = Parameter::new(ptr_ty, Location::Unknown);
+        param.nofree = true;
+        param.nocapture = true;
+
+        let func = module
+            .add_function("nofree_func", &[param], Some(i32_ty), Location::Unknown)
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            let param = func.param(0)?;
+            let loaded = func
+                .entry_block()
+                .instr_load(param, None, Location::Unknown, &storage)?;
+            func.entry_block()
+                .instr_ret(Some(&loaded), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_and_prologue_combined() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::value::ConstValue;
+
+        let mut module = Module::new("both_data", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        let func = module
+            .add_function(
+                "both_func",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            // Set both prefix and prologue data
+            func.prefix_data = Some((ConstValue::Int(0xDEADBEEF), i32_ty));
+            func.prologue_data = Some((ConstValue::Int(0xCAFEBABE), i32_ty));
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gc_with_function_attrs() -> Result<(), Box<dyn std::error::Error>> {
+        use irvm::function::FunctionAttrs;
+
+        let mut module = Module::new("gc_attrs", Location::unknown());
+        let mut storage = TypeStorage::new();
+        let i32_ty = storage.add_type(Type::Int(32), None);
+
+        let func = module
+            .add_function(
+                "gc_with_attrs",
+                &[Parameter::new(i32_ty, Location::Unknown)],
+                Some(i32_ty),
+                Location::Unknown,
+            )
+            .get_id();
+
+        {
+            let func = module.get_function_mut(func);
+            func.gc_name = Some("statepoint-example".to_string());
+            func.attrs = FunctionAttrs {
+                nounwind: true,
+                ..Default::default()
+            };
+            let param = func.param(0)?;
+            func.entry_block()
+                .instr_ret(Some(&param), Location::Unknown);
+        }
+
+        let ir = lower_module_to_llvmir(&module, &storage)?;
+        maybe_dump_ir(&ir);
 
         Ok(())
     }

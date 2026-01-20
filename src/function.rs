@@ -5,11 +5,24 @@ use crate::{
     common::{CConv, DllStorageClass, Linkage, Location, Visibility},
     error::Error,
     types::{Type, TypeIdx},
-    value::Operand,
+    value::{ConstValue, Operand},
 };
 
 pub type FnIdx = StandardSlabIndex<Function>;
 pub type DebugVarIdx = StandardSlabIndex<DebugVariable>;
+
+/// Return value attributes for optimization hints.
+#[derive(Debug, Clone, Default)]
+pub struct ReturnAttrs {
+    /// The return value does not alias any other memory.
+    pub noalias: bool,
+    /// The return value is never an undefined value.
+    pub noundef: bool,
+    /// The return value is never null.
+    pub nonnull: bool,
+    /// The return value points to N bytes of dereferenceable memory.
+    pub dereferenceable: Option<u32>,
+}
 
 /// Function-level attributes for optimization and code generation hints.
 #[derive(Debug, Clone, Default)]
@@ -65,6 +78,14 @@ pub struct Function {
     pub debug_vars: StandardSlab<DebugVariable>,
     /// Function-level attributes.
     pub attrs: FunctionAttrs,
+    /// Return value attributes.
+    pub return_attrs: ReturnAttrs,
+    /// Garbage collector name for this function.
+    pub gc_name: Option<String>,
+    /// Prefix data attached to the function.
+    pub prefix_data: Option<(ConstValue, TypeIdx)>,
+    /// Prologue data attached to the function.
+    pub prologue_data: Option<(ConstValue, TypeIdx)>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +103,7 @@ pub struct Parameter {
     pub element_type: Option<Type>,
     pub align: Option<u32>,
     pub noalias: bool,
+    pub nocapture: bool,
     pub nofree: bool,
     pub nest: bool,
     pub returned: bool,
@@ -89,9 +111,8 @@ pub struct Parameter {
     pub noundef: bool,
     pub readonly: bool,
     pub writeonly: bool,
-    pub deferenceable: Option<u32>,
+    pub dereferenceable: Option<u32>,
     pub location: Location,
-    // todo:  more attributes
 }
 
 impl Parameter {
@@ -110,6 +131,7 @@ impl Parameter {
             align: None,
             inreg: false,
             noalias: false,
+            nocapture: false,
             nofree: false,
             nest: false,
             returned: false,
@@ -117,7 +139,7 @@ impl Parameter {
             noundef: false,
             readonly: false,
             writeonly: false,
-            deferenceable: None,
+            dereferenceable: None,
             location,
         }
     }
@@ -148,6 +170,10 @@ impl Function {
             location,
             debug_vars: StandardSlab::new(),
             attrs: FunctionAttrs::default(),
+            return_attrs: ReturnAttrs::default(),
+            gc_name: None,
+            prefix_data: None,
+            prologue_data: None,
         }
     }
 
