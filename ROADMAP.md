@@ -31,10 +31,10 @@ This document outlines the planned features and improvements for IRVM.
 
 ### Function & Call Attributes
 - [x] Function attributes: `nounwind`, `noreturn`, `cold`, `hot`, `willreturn`, `nosync`, `nofree`
-- [ ] Parameter attributes: `nocapture`, `readonly`, `writeonly`, `dereferenceable(N)`
-- [ ] Return attributes: `noalias`, `noundef`, `dereferenceable(N)`
-- [ ] GC name support
-- [ ] Prefix/prologue data
+- [x] Parameter attributes: `nocapture`, `readonly`, `writeonly`, `noalias`, `noundef`, `nonnull`, `nofree`, `nest`, `returned`, `inreg`, `zeroext`, `signext`, `dereferenceable(N)`, `align(N)`
+- [x] Return attributes: `noalias`, `noundef`, `nonnull`, `dereferenceable(N)`
+- [x] GC name support
+- [x] Prefix/prologue data
 
 ### GEP Type Inference
 - [x] Implement automatic result type computation for GEP
@@ -44,7 +44,7 @@ This document outlines the planned features and improvements for IRVM.
 
 ### Memory Operation Enhancements
 - [x] Add `volatile` flag to load/store
-- [ ] Proper alignment validation
+- [x] Alignment validation error type (enforcement pending)
 - [ ] Non-temporal hints
 
 ---
