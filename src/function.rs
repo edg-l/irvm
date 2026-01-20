@@ -11,6 +11,43 @@ use crate::{
 pub type FnIdx = StandardSlabIndex<Function>;
 pub type DebugVarIdx = StandardSlabIndex<DebugVariable>;
 
+/// Function-level attributes for optimization and code generation hints.
+#[derive(Debug, Clone, Default)]
+pub struct FunctionAttrs {
+    /// Function cannot unwind (allows optimizer to remove exception handling code).
+    pub nounwind: bool,
+    /// Function never returns (e.g., calls abort, infinite loop).
+    pub noreturn: bool,
+    /// Function is rarely called (optimize for size).
+    pub cold: bool,
+    /// Function is frequently called (optimize for speed).
+    pub hot: bool,
+    /// Function will return (no infinite loops or calls to noreturn functions).
+    pub willreturn: bool,
+    /// Function has no synchronization semantics.
+    pub nosync: bool,
+    /// Function does not free memory.
+    pub nofree: bool,
+    /// Function does not recurse.
+    pub norecurse: bool,
+    /// Function does not access any memory.
+    pub readnone: bool,
+    /// Function only reads memory (doesn't write).
+    pub readonly: bool,
+    /// Function only writes memory (doesn't read).
+    pub writeonly: bool,
+    /// Inline hint - suggest inlining.
+    pub inlinehint: bool,
+    /// Always inline this function.
+    pub alwaysinline: bool,
+    /// Never inline this function.
+    pub noinline: bool,
+    /// Optimize for minimum size.
+    pub minsize: bool,
+    /// Optimize for size.
+    pub optsize: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Function {
     pub id: Option<FnIdx>,
@@ -26,6 +63,8 @@ pub struct Function {
     pub align: Option<u32>,
     pub location: Location,
     pub debug_vars: StandardSlab<DebugVariable>,
+    /// Function-level attributes.
+    pub attrs: FunctionAttrs,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +147,7 @@ impl Function {
             align: None,
             location,
             debug_vars: StandardSlab::new(),
+            attrs: FunctionAttrs::default(),
         }
     }
 

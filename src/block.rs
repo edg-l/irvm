@@ -4,7 +4,7 @@ use crate::{
     common::{CConv, Location},
     error::Error,
     function::{DebugVarIdx, FnIdx},
-    types::{FunctionType, Type, TypeIdx, TypeStorage},
+    types::{FunctionType, GepIndexKind, Type, TypeIdx, TypeStorage},
     value::Operand,
 };
 
@@ -356,11 +356,15 @@ pub enum MemoryOp {
         ptr: Operand,
         /// Align in bits.
         align: Option<u32>,
+        /// If true, the load is volatile and cannot be optimized away.
+        volatile: bool,
     },
     Store {
         value: Operand,
         ptr: Operand,
         align: Option<u32>,
+        /// If true, the store is volatile and cannot be optimized away.
+        volatile: bool,
     },
     GetElementPtr {
         ptr: Operand,
@@ -406,9 +410,156 @@ pub enum MemoryOp {
     },
 }
 
+/// LLVM intrinsic function calls.
+#[derive(Debug, Clone)]
+pub enum Intrinsic {
+    // ==================== Memory Intrinsics ====================
+    /// llvm.memcpy - Copy memory from source to destination.
+    Memcpy {
+        dest: Operand,
+        src: Operand,
+        len: Operand,
+        is_volatile: bool,
+    },
+    /// llvm.memset - Fill memory with a byte value.
+    Memset {
+        dest: Operand,
+        val: Operand,
+        len: Operand,
+        is_volatile: bool,
+    },
+    /// llvm.memmove - Copy memory (handles overlapping regions).
+    Memmove {
+        dest: Operand,
+        src: Operand,
+        len: Operand,
+        is_volatile: bool,
+    },
+
+    // ==================== Overflow Intrinsics ====================
+    /// llvm.sadd.with.overflow - Signed addition with overflow detection.
+    SaddWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+    /// llvm.uadd.with.overflow - Unsigned addition with overflow detection.
+    UaddWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+    /// llvm.ssub.with.overflow - Signed subtraction with overflow detection.
+    SsubWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+    /// llvm.usub.with.overflow - Unsigned subtraction with overflow detection.
+    UsubWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+    /// llvm.smul.with.overflow - Signed multiplication with overflow detection.
+    SmulWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+    /// llvm.umul.with.overflow - Unsigned multiplication with overflow detection.
+    UmulWithOverflow {
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+    },
+
+    // ==================== Math Intrinsics ====================
+    /// llvm.sqrt - Square root.
+    Sqrt { value: Operand },
+    /// llvm.sin - Sine.
+    Sin { value: Operand },
+    /// llvm.cos - Cosine.
+    Cos { value: Operand },
+    /// llvm.exp - Exponential (e^x).
+    Exp { value: Operand },
+    /// llvm.exp2 - Exponential base 2 (2^x).
+    Exp2 { value: Operand },
+    /// llvm.log - Natural logarithm.
+    Log { value: Operand },
+    /// llvm.log2 - Logarithm base 2.
+    Log2 { value: Operand },
+    /// llvm.log10 - Logarithm base 10.
+    Log10 { value: Operand },
+    /// llvm.fabs - Floating-point absolute value.
+    Fabs { value: Operand },
+    /// llvm.floor - Floor (round down).
+    Floor { value: Operand },
+    /// llvm.ceil - Ceiling (round up).
+    Ceil { value: Operand },
+    /// llvm.trunc - Truncate to integer (toward zero).
+    Trunc { value: Operand },
+    /// llvm.round - Round to nearest integer.
+    Round { value: Operand },
+    /// llvm.pow - Power (x^y).
+    Pow { base: Operand, exp: Operand },
+    /// llvm.powi - Power with integer exponent.
+    Powi { base: Operand, exp: Operand },
+    /// llvm.fma - Fused multiply-add (a * b + c).
+    Fma { a: Operand, b: Operand, c: Operand },
+    /// llvm.copysign - Copy sign from one value to another.
+    Copysign { mag: Operand, sign: Operand },
+    /// llvm.minnum - Minimum of two values (IEEE 754 minNum).
+    Minnum { a: Operand, b: Operand },
+    /// llvm.maxnum - Maximum of two values (IEEE 754 maxNum).
+    Maxnum { a: Operand, b: Operand },
+
+    // ==================== Bit Manipulation Intrinsics ====================
+    /// llvm.ctpop - Count number of set bits (population count).
+    Ctpop { value: Operand },
+    /// llvm.ctlz - Count leading zeros.
+    Ctlz {
+        value: Operand,
+        is_zero_poison: bool,
+    },
+    /// llvm.cttz - Count trailing zeros.
+    Cttz {
+        value: Operand,
+        is_zero_poison: bool,
+    },
+    /// llvm.bitreverse - Reverse bits.
+    Bitreverse { value: Operand },
+    /// llvm.bswap - Byte swap.
+    Bswap { value: Operand },
+    /// llvm.fshl - Funnel shift left.
+    Fshl {
+        a: Operand,
+        b: Operand,
+        shift: Operand,
+    },
+    /// llvm.fshr - Funnel shift right.
+    Fshr {
+        a: Operand,
+        b: Operand,
+        shift: Operand,
+    },
+
+    // ==================== Other Intrinsics ====================
+    /// llvm.expect - Branch prediction hint.
+    Expect { value: Operand, expected: Operand },
+    /// llvm.assume - Optimization hint (assumes condition is true).
+    Assume { cond: Operand },
+    /// llvm.trap - Unconditional trap.
+    Trap,
+    /// llvm.debugtrap - Debug trap (breakpoint).
+    Debugtrap,
+}
+
 #[derive(Debug, Clone)]
 pub enum OtherOp {
     Call(CallOp),
+    /// Intrinsic function call.
+    Intrinsic(Intrinsic),
     Icmp {
         cond: IcmpCond,
         lhs: Operand,
@@ -1011,6 +1162,18 @@ impl Block {
         location: Location,
         type_storage: &TypeStorage,
     ) -> Result<Operand, Error> {
+        self.instr_load_ex(ptr, align, false, location, type_storage)
+    }
+
+    /// Load with extended options including volatile flag.
+    pub fn instr_load_ex(
+        &mut self,
+        ptr: Operand,
+        align: Option<u32>,
+        volatile: bool,
+        location: Location,
+        type_storage: &TypeStorage,
+    ) -> Result<Operand, Error> {
         let pointer_type = type_storage.get_type_info(ptr.get_type());
         let inner = if let Type::Ptr { pointee, .. } = pointer_type.ty {
             pointee
@@ -1023,7 +1186,11 @@ impl Block {
 
         let idx = self.add_instr((
             location,
-            Instruction::MemoryOp(MemoryOp::Load { ptr, align }),
+            Instruction::MemoryOp(MemoryOp::Load {
+                ptr,
+                align,
+                volatile,
+            }),
         ));
 
         Ok(Operand::Value(self.id(), idx, inner))
@@ -1034,6 +1201,19 @@ impl Block {
         ptr: Operand,
         value: Operand,
         align: Option<u32>,
+        location: Location,
+        type_storage: &TypeStorage,
+    ) -> Result<(), Error> {
+        self.instr_store_ex(ptr, value, align, false, location, type_storage)
+    }
+
+    /// Store with extended options including volatile flag.
+    pub fn instr_store_ex(
+        &mut self,
+        ptr: Operand,
+        value: Operand,
+        align: Option<u32>,
+        volatile: bool,
         location: Location,
         type_storage: &TypeStorage,
     ) -> Result<(), Error> {
@@ -1056,13 +1236,66 @@ impl Block {
 
         self.add_instr((
             location,
-            Instruction::MemoryOp(MemoryOp::Store { value, ptr, align }),
+            Instruction::MemoryOp(MemoryOp::Store {
+                value,
+                ptr,
+                align,
+                volatile,
+            }),
         ));
 
         Ok(())
     }
 
+    /// GEP with automatic result type inference.
+    ///
+    /// Computes the result type automatically from the pointer type and indices.
+    /// For struct indices, use `GepIndex::Const` to allow type inference.
     pub fn instr_gep(
+        &mut self,
+        ptr: Operand,
+        indices: &[GepIndex],
+        location: Location,
+        type_storage: &mut TypeStorage,
+    ) -> Result<Operand, Error> {
+        let pointer_type = type_storage.get_type_info(ptr.get_type());
+
+        if !matches!(pointer_type.ty, Type::Ptr { .. }) {
+            return Err(Error::InvalidType {
+                found: pointer_type.clone(),
+                expected: "pointer".to_string(),
+            });
+        }
+
+        // Convert GepIndex to GepIndexKind for type computation
+        let index_kinds: Vec<GepIndexKind> = indices
+            .iter()
+            .map(|idx| match idx {
+                GepIndex::Const(n) => GepIndexKind::Const(*n),
+                GepIndex::Value(_) => GepIndexKind::Dynamic,
+            })
+            .collect();
+
+        let result_type = type_storage
+            .compute_gep_result_type(ptr.get_type(), &index_kinds)
+            .map_err(|e| Error::GepTypeError(e.to_string()))?;
+
+        let idx = self.add_instr((
+            location,
+            Instruction::MemoryOp(MemoryOp::GetElementPtr {
+                ptr,
+                indices: indices.to_vec(),
+            }),
+        ));
+
+        Ok(Operand::Value(self.id(), idx, result_type))
+    }
+
+    /// GEP with explicit result type specification.
+    ///
+    /// Use this when you want to specify the result type manually,
+    /// or when type inference is not possible.
+    pub fn instr_gep_ex(
         &mut self,
         ptr: Operand,
         indices: &[GepIndex],
@@ -1078,8 +1311,6 @@ impl Block {
                 expected: "pointer".to_string(),
             });
         }
-
-        // TODO: Find result type automatically.
 
         let idx = self.add_instr((
             location,
@@ -1685,5 +1916,365 @@ impl Block {
             }),
         ));
         Ok(Operand::Value(self.id(), idx, result_ty))
+    }
+
+    // ==================== Intrinsics ====================
+
+    /// llvm.memcpy - Copy memory from source to destination.
+    pub fn instr_memcpy(
+        &mut self,
+        dest: Operand,
+        src: Operand,
+        len: Operand,
+        is_volatile: bool,
+        location: Location,
+    ) {
+        self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Memcpy {
+                dest,
+                src,
+                len,
+                is_volatile,
+            })),
+        ));
+    }
+
+    /// llvm.memset - Fill memory with a byte value.
+    pub fn instr_memset(
+        &mut self,
+        dest: Operand,
+        val: Operand,
+        len: Operand,
+        is_volatile: bool,
+        location: Location,
+    ) {
+        self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Memset {
+                dest,
+                val,
+                len,
+                is_volatile,
+            })),
+        ));
+    }
+
+    /// llvm.memmove - Copy memory (handles overlapping regions).
+    pub fn instr_memmove(
+        &mut self,
+        dest: Operand,
+        src: Operand,
+        len: Operand,
+        is_volatile: bool,
+        location: Location,
+    ) {
+        self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Memmove {
+                dest,
+                src,
+                len,
+                is_volatile,
+            })),
+        ));
+    }
+
+    /// llvm.sadd.with.overflow - Signed addition with overflow detection.
+    /// Returns a struct { result, overflow_flag }.
+    pub fn instr_sadd_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::SaddWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.uadd.with.overflow - Unsigned addition with overflow detection.
+    /// Returns a struct { result, overflow_flag }.
+    pub fn instr_uadd_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::UaddWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.ssub.with.overflow - Signed subtraction with overflow detection.
+    pub fn instr_ssub_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::SsubWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.usub.with.overflow - Unsigned subtraction with overflow detection.
+    pub fn instr_usub_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::UsubWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.smul.with.overflow - Signed multiplication with overflow detection.
+    pub fn instr_smul_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::SmulWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.umul.with.overflow - Unsigned multiplication with overflow detection.
+    pub fn instr_umul_with_overflow(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_ty: TypeIdx,
+        location: Location,
+    ) -> Operand {
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::UmulWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.sqrt - Square root of a floating-point value.
+    pub fn instr_sqrt(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Sqrt { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.sin - Sine of a floating-point value.
+    pub fn instr_sin(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Sin { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.cos - Cosine of a floating-point value.
+    pub fn instr_cos(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Cos { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.exp - Exponential (e^x).
+    pub fn instr_exp(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Exp { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.log - Natural logarithm.
+    pub fn instr_log(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Log { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.fabs - Floating-point absolute value.
+    pub fn instr_fabs(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Fabs { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.floor - Floor (round down).
+    pub fn instr_floor(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Floor { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.ceil - Ceiling (round up).
+    pub fn instr_ceil(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Ceil { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.pow - Power (x^y).
+    pub fn instr_pow(&mut self, base: Operand, exp: Operand, location: Location) -> Operand {
+        let result_ty = base.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Pow { base, exp })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.fma - Fused multiply-add (a * b + c).
+    pub fn instr_fma(&mut self, a: Operand, b: Operand, c: Operand, location: Location) -> Operand {
+        let result_ty = a.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Fma { a, b, c })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.ctpop - Count number of set bits (population count).
+    pub fn instr_ctpop(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Ctpop { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.ctlz - Count leading zeros.
+    pub fn instr_ctlz(
+        &mut self,
+        value: Operand,
+        is_zero_poison: bool,
+        location: Location,
+    ) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Ctlz {
+                value,
+                is_zero_poison,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.cttz - Count trailing zeros.
+    pub fn instr_cttz(
+        &mut self,
+        value: Operand,
+        is_zero_poison: bool,
+        location: Location,
+    ) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Cttz {
+                value,
+                is_zero_poison,
+            })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.bitreverse - Reverse bits.
+    pub fn instr_bitreverse(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Bitreverse { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.bswap - Byte swap.
+    pub fn instr_bswap(&mut self, value: Operand, location: Location) -> Operand {
+        let result_ty = value.get_type();
+        let idx = self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Bswap { value })),
+        ));
+        Operand::Value(self.id(), idx, result_ty)
+    }
+
+    /// llvm.trap - Unconditional trap.
+    pub fn instr_trap(&mut self, location: Location) {
+        self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Trap)),
+        ));
+    }
+
+    /// llvm.debugtrap - Debug trap (breakpoint).
+    pub fn instr_debugtrap(&mut self, location: Location) {
+        self.add_instr((
+            location,
+            Instruction::OtherOp(OtherOp::Intrinsic(Intrinsic::Debugtrap)),
+        ));
     }
 }

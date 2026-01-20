@@ -17,4 +17,6 @@ pub enum Error {
     FunctionParamNotFound { name: String, nth: usize },
     #[error("invalid type, found {found:?} expected {expected:?}")]
     InvalidType { found: TypeInfo, expected: String },
+    #[error("GEP type error: {0}")]
+    GepTypeError(String),
 }

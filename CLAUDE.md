@@ -164,3 +164,4 @@ The MCJIT execution engine only supports certain parameter/return types reliably
 - Prefer explicit types over inference for public APIs
 - Use `Location` for source mapping on all constructs
 - Clone-friendly types (most types derive Clone)
+- Use `cargo fmt` after changes

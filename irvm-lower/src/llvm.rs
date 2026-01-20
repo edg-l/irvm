@@ -480,6 +480,7 @@ pub fn lower_module_to_llvmir(
                 .collect_vec();
             let fn_ty = core::LLVMFunctionType(ret_ty, params.as_mut_ptr(), params.len() as u32, 0);
             let fn_ptr = core::LLVMAddFunction(llvm_module, name.as_ptr(), fn_ty);
+            apply_function_attrs(ctx, fn_ptr, &func.attrs);
             functions.insert(fun_idx.to_idx(), (fn_ptr, fn_ty));
 
             let mut file = compile_unit_file;
@@ -1165,7 +1166,11 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                         ctx.values
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
                     }
-                    irvm::block::MemoryOp::Load { ptr, align } => {
+                    irvm::block::MemoryOp::Load {
+                        ptr,
+                        align,
+                        volatile,
+                    } => {
                         let ptr_val = lower_operand(ctx, ptr);
                         let ty_ptr =
                             lower_type(ctx.ctx, ctx.storage, ptr.get_inner_type(ctx.storage)?);
@@ -1175,17 +1180,28 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                         if let Some(align) = align {
                             core::LLVMSetAlignment(value, *align / 8);
                         }
+                        if *volatile {
+                            core::LLVMSetVolatile(value, 1);
+                        }
 
                         ctx.values
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
                     }
-                    irvm::block::MemoryOp::Store { value, ptr, align } => {
+                    irvm::block::MemoryOp::Store {
+                        value,
+                        ptr,
+                        align,
+                        volatile,
+                    } => {
                         let ptr_val = lower_operand(ctx, ptr);
                         let value_val = lower_operand(ctx, value);
 
                         let value = core::LLVMBuildStore(ctx.builder, value_val, ptr_val);
                         if let Some(align) = align {
                             core::LLVMSetAlignment(value, *align / 8);
+                        }
+                        if *volatile {
+                            core::LLVMSetVolatile(value, 1);
                         }
 
                         ctx.values
@@ -1483,6 +1499,13 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
 
                         ctx.values
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), lp);
+                    }
+                    irvm::block::OtherOp::Intrinsic(intrinsic) => {
+                        let value = lower_intrinsic(&ctx, intrinsic, block_idx, inst_idx)?;
+                        if !value.is_null() {
+                            ctx.values
+                                .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
+                        }
                     }
                 },
                 Instruction::DebugOp(debug_op) => match debug_op {
@@ -2603,4 +2626,831 @@ fn apply_fast_math_flags(value: LLVMValueRef, flags: &FastMathFlags) {
     unsafe {
         core::LLVMSetFastMathFlags(value, llvm_flags);
     }
+}
+
+/// Apply function-level attributes to an LLVM function.
+fn apply_function_attrs(
+    ctx: LLVMContextRef,
+    fn_ptr: LLVMValueRef,
+    attrs: &irvm::function::FunctionAttrs,
+) {
+    // Function attribute index is -1 (LLVMAttributeFunctionIndex)
+    const FUNCTION_INDEX: u32 = !0;
+
+    unsafe {
+        // Helper to add a string-named attribute
+        let add_attr = |name: &[u8]| {
+            let kind = core::LLVMGetEnumAttributeKindForName(name.as_ptr().cast(), name.len());
+            if kind != 0 {
+                let attr = core::LLVMCreateEnumAttribute(ctx, kind, 0);
+                core::LLVMAddAttributeAtIndex(fn_ptr, FUNCTION_INDEX, attr);
+            }
+        };
+
+        if attrs.nounwind {
+            add_attr(b"nounwind");
+        }
+        if attrs.noreturn {
+            add_attr(b"noreturn");
+        }
+        if attrs.cold {
+            add_attr(b"cold");
+        }
+        if attrs.hot {
+            add_attr(b"hot");
+        }
+        if attrs.willreturn {
+            add_attr(b"willreturn");
+        }
+        if attrs.nosync {
+            add_attr(b"nosync");
+        }
+        if attrs.nofree {
+            add_attr(b"nofree");
+        }
+        if attrs.norecurse {
+            add_attr(b"norecurse");
+        }
+        if attrs.readnone {
+            add_attr(b"readnone");
+        }
+        if attrs.readonly {
+            add_attr(b"readonly");
+        }
+        if attrs.writeonly {
+            add_attr(b"writeonly");
+        }
+        if attrs.inlinehint {
+            add_attr(b"inlinehint");
+        }
+        if attrs.alwaysinline {
+            add_attr(b"alwaysinline");
+        }
+        if attrs.noinline {
+            add_attr(b"noinline");
+        }
+        if attrs.minsize {
+            add_attr(b"minsize");
+        }
+        if attrs.optsize {
+            add_attr(b"optsize");
+        }
+    }
+}
+
+/// Lower an intrinsic call to LLVM IR.
+unsafe fn lower_intrinsic(
+    ctx: &FnCtx,
+    intrinsic: &irvm::block::Intrinsic,
+    _block_idx: BlockIdx,
+    _inst_idx: irvm::block::InstIdx,
+) -> Result<LLVMValueRef, Error> {
+    use irvm::block::Intrinsic;
+
+    unsafe {
+        let null_name = c"";
+        let module = core::LLVMGetGlobalParent(ctx.fn_ptr);
+
+        match intrinsic {
+            // Memory intrinsics
+            Intrinsic::Memcpy {
+                dest,
+                src,
+                len,
+                is_volatile,
+            } => {
+                let dest_val = lower_operand(ctx, dest);
+                let src_val = lower_operand(ctx, src);
+                let len_val = lower_operand(ctx, len);
+                core::LLVMBuildMemCpy(
+                    ctx.builder,
+                    dest_val,
+                    1, // dest alignment
+                    src_val,
+                    1, // src alignment
+                    len_val,
+                );
+                Ok(null_mut())
+            }
+            Intrinsic::Memset {
+                dest,
+                val,
+                len,
+                is_volatile,
+            } => {
+                let dest_val = lower_operand(ctx, dest);
+                let val_val = lower_operand(ctx, val);
+                let len_val = lower_operand(ctx, len);
+                core::LLVMBuildMemSet(
+                    ctx.builder,
+                    dest_val,
+                    val_val,
+                    len_val,
+                    1, // alignment
+                );
+                Ok(null_mut())
+            }
+            Intrinsic::Memmove {
+                dest,
+                src,
+                len,
+                is_volatile,
+            } => {
+                let dest_val = lower_operand(ctx, dest);
+                let src_val = lower_operand(ctx, src);
+                let len_val = lower_operand(ctx, len);
+                core::LLVMBuildMemMove(
+                    ctx.builder,
+                    dest_val,
+                    1, // dest alignment
+                    src_val,
+                    1, // src alignment
+                    len_val,
+                );
+                Ok(null_mut())
+            }
+
+            // Overflow intrinsics
+            Intrinsic::SaddWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.sadd.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::UaddWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.uadd.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::SsubWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.ssub.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::UsubWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.usub.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::SmulWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.smul.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::UmulWithOverflow {
+                lhs,
+                rhs,
+                result_ty,
+            } => {
+                let lhs_val = lower_operand(ctx, lhs);
+                let rhs_val = lower_operand(ctx, rhs);
+                let lhs_ty = lower_type(ctx.ctx, ctx.storage, lhs.get_type());
+                let intrinsic_name = CString::new(format!(
+                    "llvm.umul.with.overflow.i{}",
+                    core::LLVMGetIntTypeWidth(lhs_ty)
+                ))
+                .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [lhs_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [lhs_val, rhs_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    null_name.as_ptr(),
+                );
+                Ok(value)
+            }
+
+            // Math intrinsics - unary
+            Intrinsic::Sqrt { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.sqrt", value)
+            }
+            Intrinsic::Sin { value } => lower_unary_float_intrinsic(ctx, module, "llvm.sin", value),
+            Intrinsic::Cos { value } => lower_unary_float_intrinsic(ctx, module, "llvm.cos", value),
+            Intrinsic::Exp { value } => lower_unary_float_intrinsic(ctx, module, "llvm.exp", value),
+            Intrinsic::Exp2 { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.exp2", value)
+            }
+            Intrinsic::Log { value } => lower_unary_float_intrinsic(ctx, module, "llvm.log", value),
+            Intrinsic::Log2 { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.log2", value)
+            }
+            Intrinsic::Log10 { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.log10", value)
+            }
+            Intrinsic::Fabs { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.fabs", value)
+            }
+            Intrinsic::Floor { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.floor", value)
+            }
+            Intrinsic::Ceil { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.ceil", value)
+            }
+            Intrinsic::Trunc { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.trunc", value)
+            }
+            Intrinsic::Round { value } => {
+                lower_unary_float_intrinsic(ctx, module, "llvm.round", value)
+            }
+
+            // Math intrinsics - binary
+            Intrinsic::Pow { base, exp } => {
+                lower_binary_float_intrinsic(ctx, module, "llvm.pow", base, exp)
+            }
+            Intrinsic::Powi { base, exp } => {
+                // powi takes float and i32 exponent
+                let base_val = lower_operand(ctx, base);
+                let exp_val = lower_operand(ctx, exp);
+                let base_ty = lower_type(ctx.ctx, ctx.storage, base.get_type());
+                let ty_name = get_float_type_suffix(base_ty);
+                let intrinsic_name = CString::new(format!("llvm.powi.{}.i32", ty_name)).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [base_ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [base_val, exp_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(value)
+            }
+            Intrinsic::Copysign { mag, sign } => {
+                lower_binary_float_intrinsic(ctx, module, "llvm.copysign", mag, sign)
+            }
+            Intrinsic::Minnum { a, b } => {
+                lower_binary_float_intrinsic(ctx, module, "llvm.minnum", a, b)
+            }
+            Intrinsic::Maxnum { a, b } => {
+                lower_binary_float_intrinsic(ctx, module, "llvm.maxnum", a, b)
+            }
+
+            // Math intrinsics - ternary
+            Intrinsic::Fma { a, b, c } => {
+                let a_val = lower_operand(ctx, a);
+                let b_val = lower_operand(ctx, b);
+                let c_val = lower_operand(ctx, c);
+                let ty = lower_type(ctx.ctx, ctx.storage, a.get_type());
+                let ty_name = get_float_type_suffix(ty);
+                let intrinsic_name = CString::new(format!("llvm.fma.{}", ty_name)).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [a_val, b_val, c_val];
+                let value = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(value)
+            }
+
+            // Bit manipulation intrinsics
+            Intrinsic::Ctpop { value } => {
+                lower_unary_int_intrinsic(ctx, module, "llvm.ctpop", value)
+            }
+            Intrinsic::Ctlz {
+                value,
+                is_zero_poison,
+            } => {
+                let val = lower_operand(ctx, value);
+                let ty = lower_type(ctx.ctx, ctx.storage, value.get_type());
+                let intrinsic_name =
+                    CString::new(format!("llvm.ctlz.i{}", core::LLVMGetIntTypeWidth(ty))).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let poison_val = core::LLVMConstInt(
+                    core::LLVMInt1TypeInContext(ctx.ctx),
+                    *is_zero_poison as u64,
+                    0,
+                );
+                let mut args = [val, poison_val];
+                let result = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(result)
+            }
+            Intrinsic::Cttz {
+                value,
+                is_zero_poison,
+            } => {
+                let val = lower_operand(ctx, value);
+                let ty = lower_type(ctx.ctx, ctx.storage, value.get_type());
+                let intrinsic_name =
+                    CString::new(format!("llvm.cttz.i{}", core::LLVMGetIntTypeWidth(ty))).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let poison_val = core::LLVMConstInt(
+                    core::LLVMInt1TypeInContext(ctx.ctx),
+                    *is_zero_poison as u64,
+                    0,
+                );
+                let mut args = [val, poison_val];
+                let result = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(result)
+            }
+            Intrinsic::Bitreverse { value } => {
+                lower_unary_int_intrinsic(ctx, module, "llvm.bitreverse", value)
+            }
+            Intrinsic::Bswap { value } => {
+                lower_unary_int_intrinsic(ctx, module, "llvm.bswap", value)
+            }
+            Intrinsic::Fshl { a, b, shift } => {
+                let a_val = lower_operand(ctx, a);
+                let b_val = lower_operand(ctx, b);
+                let shift_val = lower_operand(ctx, shift);
+                let ty = lower_type(ctx.ctx, ctx.storage, a.get_type());
+                let intrinsic_name =
+                    CString::new(format!("llvm.fshl.i{}", core::LLVMGetIntTypeWidth(ty))).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [a_val, b_val, shift_val];
+                let result = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(result)
+            }
+            Intrinsic::Fshr { a, b, shift } => {
+                let a_val = lower_operand(ctx, a);
+                let b_val = lower_operand(ctx, b);
+                let shift_val = lower_operand(ctx, shift);
+                let ty = lower_type(ctx.ctx, ctx.storage, a.get_type());
+                let intrinsic_name =
+                    CString::new(format!("llvm.fshr.i{}", core::LLVMGetIntTypeWidth(ty))).unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [a_val, b_val, shift_val];
+                let result = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(result)
+            }
+
+            // Other intrinsics
+            Intrinsic::Expect { value, expected } => {
+                let val = lower_operand(ctx, value);
+                let exp = lower_operand(ctx, expected);
+                let ty = lower_type(ctx.ctx, ctx.storage, value.get_type());
+                let intrinsic_name =
+                    CString::new(format!("llvm.expect.i{}", core::LLVMGetIntTypeWidth(ty)))
+                        .unwrap();
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.to_bytes().len(),
+                );
+                let mut param_types = [ty];
+                let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+                    module,
+                    intrinsic_id,
+                    param_types.as_mut_ptr(),
+                    param_types.len(),
+                );
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [val, exp];
+                let result = core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(result)
+            }
+            Intrinsic::Assume { cond } => {
+                let cond_val = lower_operand(ctx, cond);
+                let intrinsic_name = c"llvm.assume";
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.count_bytes(),
+                );
+                let intrinsic_fn =
+                    core::LLVMGetIntrinsicDeclaration(module, intrinsic_id, null_mut(), 0);
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                let mut args = [cond_val];
+                core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    args.as_mut_ptr(),
+                    args.len() as u32,
+                    c"".as_ptr(),
+                );
+                Ok(null_mut())
+            }
+            Intrinsic::Trap => {
+                let intrinsic_name = c"llvm.trap";
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.count_bytes(),
+                );
+                let intrinsic_fn =
+                    core::LLVMGetIntrinsicDeclaration(module, intrinsic_id, null_mut(), 0);
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    null_mut(),
+                    0,
+                    c"".as_ptr(),
+                );
+                Ok(null_mut())
+            }
+            Intrinsic::Debugtrap => {
+                let intrinsic_name = c"llvm.debugtrap";
+                let intrinsic_id = core::LLVMLookupIntrinsicID(
+                    intrinsic_name.as_ptr(),
+                    intrinsic_name.count_bytes(),
+                );
+                let intrinsic_fn =
+                    core::LLVMGetIntrinsicDeclaration(module, intrinsic_id, null_mut(), 0);
+                let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+                core::LLVMBuildCall2(
+                    ctx.builder,
+                    fn_ty,
+                    intrinsic_fn,
+                    null_mut(),
+                    0,
+                    c"".as_ptr(),
+                );
+                Ok(null_mut())
+            }
+        }
+    } // end unsafe block
+}
+
+/// Helper to lower unary float intrinsics.
+unsafe fn lower_unary_float_intrinsic(
+    ctx: &FnCtx,
+    module: *mut LLVMModule,
+    name: &str,
+    value: &Operand,
+) -> Result<LLVMValueRef, Error> {
+    unsafe {
+        let val = lower_operand(ctx, value);
+        let ty = lower_type(ctx.ctx, ctx.storage, value.get_type());
+        let ty_name = get_float_type_suffix(ty);
+        let intrinsic_name = CString::new(format!("{}.{}", name, ty_name)).unwrap();
+        let intrinsic_id =
+            core::LLVMLookupIntrinsicID(intrinsic_name.as_ptr(), intrinsic_name.to_bytes().len());
+        let mut param_types = [ty];
+        let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+            module,
+            intrinsic_id,
+            param_types.as_mut_ptr(),
+            param_types.len(),
+        );
+        let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+        let mut args = [val];
+        let result = core::LLVMBuildCall2(
+            ctx.builder,
+            fn_ty,
+            intrinsic_fn,
+            args.as_mut_ptr(),
+            args.len() as u32,
+            c"".as_ptr(),
+        );
+        Ok(result)
+    } // end unsafe block
+}
+
+/// Helper to lower binary float intrinsics.
+unsafe fn lower_binary_float_intrinsic(
+    ctx: &FnCtx,
+    module: *mut LLVMModule,
+    name: &str,
+    a: &Operand,
+    b: &Operand,
+) -> Result<LLVMValueRef, Error> {
+    unsafe {
+        let a_val = lower_operand(ctx, a);
+        let b_val = lower_operand(ctx, b);
+        let ty = lower_type(ctx.ctx, ctx.storage, a.get_type());
+        let ty_name = get_float_type_suffix(ty);
+        let intrinsic_name = CString::new(format!("{}.{}", name, ty_name)).unwrap();
+        let intrinsic_id =
+            core::LLVMLookupIntrinsicID(intrinsic_name.as_ptr(), intrinsic_name.to_bytes().len());
+        let mut param_types = [ty];
+        let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+            module,
+            intrinsic_id,
+            param_types.as_mut_ptr(),
+            param_types.len(),
+        );
+        let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+        let mut args = [a_val, b_val];
+        let result = core::LLVMBuildCall2(
+            ctx.builder,
+            fn_ty,
+            intrinsic_fn,
+            args.as_mut_ptr(),
+            args.len() as u32,
+            c"".as_ptr(),
+        );
+        Ok(result)
+    } // end unsafe block
+}
+
+/// Helper to lower unary integer intrinsics.
+unsafe fn lower_unary_int_intrinsic(
+    ctx: &FnCtx,
+    module: *mut LLVMModule,
+    name: &str,
+    value: &Operand,
+) -> Result<LLVMValueRef, Error> {
+    unsafe {
+        let val = lower_operand(ctx, value);
+        let ty = lower_type(ctx.ctx, ctx.storage, value.get_type());
+        let intrinsic_name =
+            CString::new(format!("{}.i{}", name, core::LLVMGetIntTypeWidth(ty))).unwrap();
+        let intrinsic_id =
+            core::LLVMLookupIntrinsicID(intrinsic_name.as_ptr(), intrinsic_name.to_bytes().len());
+        let mut param_types = [ty];
+        let intrinsic_fn = core::LLVMGetIntrinsicDeclaration(
+            module,
+            intrinsic_id,
+            param_types.as_mut_ptr(),
+            param_types.len(),
+        );
+        let fn_ty = core::LLVMGlobalGetValueType(intrinsic_fn);
+        let mut args = [val];
+        let result = core::LLVMBuildCall2(
+            ctx.builder,
+            fn_ty,
+            intrinsic_fn,
+            args.as_mut_ptr(),
+            args.len() as u32,
+            c"".as_ptr(),
+        );
+        Ok(result)
+    } // end unsafe block
+}
+
+/// Get the LLVM type suffix for float types.
+unsafe fn get_float_type_suffix(ty: LLVMTypeRef) -> &'static str {
+    unsafe {
+        match core::LLVMGetTypeKind(ty) {
+            llvm_sys::LLVMTypeKind::LLVMHalfTypeKind => "f16",
+            llvm_sys::LLVMTypeKind::LLVMBFloatTypeKind => "bf16",
+            llvm_sys::LLVMTypeKind::LLVMFloatTypeKind => "f32",
+            llvm_sys::LLVMTypeKind::LLVMDoubleTypeKind => "f64",
+            llvm_sys::LLVMTypeKind::LLVMFP128TypeKind => "f128",
+            _ => "f64", // default to f64
+        }
+    } // end unsafe block
 }

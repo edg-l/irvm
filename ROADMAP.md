@@ -23,27 +23,27 @@ This document outlines the planned features and improvements for IRVM.
 ## Medium Priority (v0.3.0)
 
 ### Intrinsics System
-- [ ] Design intrinsics declaration mechanism
-- [ ] Implement `llvm.memcpy`, `llvm.memset`, `llvm.memmove`
-- [ ] Implement overflow intrinsics (`llvm.sadd.with.overflow`, etc.)
-- [ ] Implement math intrinsics (`llvm.sqrt`, `llvm.sin`, `llvm.cos`, etc.)
-- [ ] Implement bit manipulation intrinsics (`llvm.ctpop`, `llvm.ctlz`, `llvm.cttz`)
+- [x] Design intrinsics declaration mechanism
+- [x] Implement `llvm.memcpy`, `llvm.memset`, `llvm.memmove`
+- [x] Implement overflow intrinsics (`llvm.sadd.with.overflow`, etc.)
+- [x] Implement math intrinsics (`llvm.sqrt`, `llvm.sin`, `llvm.cos`, etc.)
+- [x] Implement bit manipulation intrinsics (`llvm.ctpop`, `llvm.ctlz`, `llvm.cttz`)
 
 ### Function & Call Attributes
-- [ ] Function attributes: `nounwind`, `noreturn`, `cold`, `hot`, `willreturn`, `nosync`, `nofree`
+- [x] Function attributes: `nounwind`, `noreturn`, `cold`, `hot`, `willreturn`, `nosync`, `nofree`
 - [ ] Parameter attributes: `nocapture`, `readonly`, `writeonly`, `dereferenceable(N)`
 - [ ] Return attributes: `noalias`, `noundef`, `dereferenceable(N)`
 - [ ] GC name support
 - [ ] Prefix/prologue data
 
 ### GEP Type Inference
-- [ ] Implement automatic result type computation for GEP
-- [ ] Add `compute_gep_result_type` helper function
-- [ ] Update `instr_gep` to infer result type automatically
-- [ ] Keep `instr_gep_ex` for explicit type specification
+- [x] Implement automatic result type computation for GEP
+- [x] Add `compute_gep_result_type` helper function
+- [x] Update `instr_gep` to infer result type automatically
+- [x] Keep `instr_gep_ex` for explicit type specification
 
 ### Memory Operation Enhancements
-- [ ] Add `volatile` flag to load/store
+- [x] Add `volatile` flag to load/store
 - [ ] Proper alignment validation
 - [ ] Non-temporal hints
 

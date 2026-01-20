@@ -247,7 +247,7 @@ mod test {
             &storage,
         )?;
 
-        let ptr_idx1 = func.blocks[entry].instr_gep(
+        let ptr_idx1 = func.blocks[entry].instr_gep_ex(
             ptr_val,
             &[GepIndex::Const(1)],
             ptr_ty,

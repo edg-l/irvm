@@ -155,4 +155,115 @@ impl TypeStorage {
             self.add_type(Type::Int(64), None)
         }
     }
+
+    /// Compute the result type of a GEP (GetElementPtr) operation.
+    ///
+    /// Given a pointer type and a sequence of indices, this function computes
+    /// the type of the resulting pointer. The result is always a pointer type.
+    ///
+    /// # Arguments
+    /// * `ptr_ty` - The type of the pointer operand (must be a Ptr type)
+    /// * `indices` - The GEP indices. For struct indices, use `GepIndexKind::Const`.
+    ///
+    /// # Returns
+    /// The TypeIdx of the result pointer type, or an error if the GEP is invalid.
+    ///
+    /// # GEP Semantics
+    /// - The first index offsets within the pointee type (like array indexing)
+    /// - Subsequent indices descend into aggregate types:
+    ///   - Array: descends to element type (index can be dynamic)
+    ///   - Struct: descends to field type (index must be constant)
+    ///   - Vector: descends to element type (index can be dynamic)
+    pub fn compute_gep_result_type(
+        &mut self,
+        ptr_ty: TypeIdx,
+        indices: &[GepIndexKind],
+    ) -> Result<TypeIdx, GepTypeError> {
+        let ptr_info = self.get_type_info(ptr_ty);
+        let (pointee, addr_space) = match &ptr_info.ty {
+            Type::Ptr {
+                pointee,
+                address_space,
+            } => (*pointee, *address_space),
+            _ => return Err(GepTypeError::NotAPointer),
+        };
+
+        if indices.is_empty() {
+            return Err(GepTypeError::NoIndices);
+        }
+
+        // First index just offsets within the pointee array, doesn't change type
+        let mut current_ty = pointee;
+
+        // Process remaining indices
+        for (i, idx) in indices.iter().skip(1).enumerate() {
+            let ty_info = self.get_type_info(current_ty);
+            current_ty = match &ty_info.ty {
+                Type::Array(array_ty) => array_ty.ty,
+                Type::Struct(struct_ty) => {
+                    let field_idx = match idx {
+                        GepIndexKind::Const(n) => *n,
+                        GepIndexKind::Dynamic => {
+                            return Err(GepTypeError::DynamicStructIndex { index: i + 1 });
+                        }
+                    };
+                    *struct_ty.fields.get(field_idx).ok_or(
+                        GepTypeError::StructFieldOutOfBounds {
+                            index: i + 1,
+                            field: field_idx,
+                            num_fields: struct_ty.fields.len(),
+                        },
+                    )?
+                }
+                Type::Vector(vec_ty) => vec_ty.ty,
+                _ => {
+                    return Err(GepTypeError::CannotIndex {
+                        index: i + 1,
+                        ty: format!("{:?}", ty_info.ty),
+                    });
+                }
+            };
+        }
+
+        // The result is a pointer to the final type
+        let result_ty = self.add_type(
+            Type::Ptr {
+                pointee: current_ty,
+                address_space: addr_space,
+            },
+            None,
+        );
+
+        Ok(result_ty)
+    }
+}
+
+/// Index kind for GEP type computation.
+#[derive(Debug, Clone, Copy)]
+pub enum GepIndexKind {
+    /// A constant index value.
+    Const(usize),
+    /// A dynamic (non-constant) index.
+    Dynamic,
+}
+
+/// Errors that can occur during GEP type computation.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum GepTypeError {
+    #[error("GEP base must be a pointer type")]
+    NotAPointer,
+    #[error("GEP requires at least one index")]
+    NoIndices,
+    #[error("struct index at position {index} must be constant")]
+    DynamicStructIndex { index: usize },
+    #[error(
+        "struct field index {field} out of bounds (struct has {num_fields} fields) at index position {index}"
+    )]
+    StructFieldOutOfBounds {
+        index: usize,
+        field: usize,
+        num_fields: usize,
+    },
+    #[error("cannot index into type {ty} at position {index}")]
+    CannotIndex { index: usize, ty: String },
 }
