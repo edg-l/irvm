@@ -1524,7 +1524,7 @@ fn lower_block(ctx: &mut FnCtx, block_idx: BlockIdx) -> Result<(), Error> {
                             .insert((block_idx.to_idx(), inst_idx.to_idx()), lp);
                     }
                     irvm::block::OtherOp::Intrinsic(intrinsic) => {
-                        let value = lower_intrinsic(&ctx, intrinsic, block_idx, inst_idx)?;
+                        let value = lower_intrinsic(ctx, intrinsic, block_idx, inst_idx)?;
                         if !value.is_null() {
                             ctx.values
                                 .insert((block_idx.to_idx(), inst_idx.to_idx()), value);
@@ -2864,7 +2864,7 @@ unsafe fn lower_intrinsic(
                 dest,
                 src,
                 len,
-                is_volatile,
+                is_volatile: _,
             } => {
                 let dest_val = lower_operand(ctx, dest);
                 let src_val = lower_operand(ctx, src);
@@ -2883,7 +2883,7 @@ unsafe fn lower_intrinsic(
                 dest,
                 val,
                 len,
-                is_volatile,
+                is_volatile: _,
             } => {
                 let dest_val = lower_operand(ctx, dest);
                 let val_val = lower_operand(ctx, val);
@@ -2901,7 +2901,7 @@ unsafe fn lower_intrinsic(
                 dest,
                 src,
                 len,
-                is_volatile,
+                is_volatile: _,
             } => {
                 let dest_val = lower_operand(ctx, dest);
                 let src_val = lower_operand(ctx, src);
@@ -2921,7 +2921,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::SaddWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);
@@ -2957,7 +2957,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::UaddWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);
@@ -2993,7 +2993,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::SsubWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);
@@ -3029,7 +3029,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::UsubWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);
@@ -3065,7 +3065,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::SmulWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);
@@ -3101,7 +3101,7 @@ unsafe fn lower_intrinsic(
             Intrinsic::UmulWithOverflow {
                 lhs,
                 rhs,
-                result_ty,
+                result_ty: _,
             } => {
                 let lhs_val = lower_operand(ctx, lhs);
                 let rhs_val = lower_operand(ctx, rhs);

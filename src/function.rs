@@ -268,7 +268,7 @@ impl Function {
                         preds.push((i, default_args.clone()));
                     }
                     for case in cases {
-                        if &case.block == &target_block {
+                        if case.block == target_block {
                             preds.push((i, case.arguments.clone()));
                         }
                     }
